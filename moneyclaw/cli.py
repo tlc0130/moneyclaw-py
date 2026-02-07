@@ -45,52 +45,45 @@ async def _run(web: bool, telegram: bool) -> None:
     from moneyclaw.execution.risk import RiskManager
     from moneyclaw.execution.trading import ExchangeManager, TradeExecutor
     from moneyclaw.interface.telegram.notify import Notifier
+    from moneyclaw.llm.budget_manager import BudgetManager, BudgetPolicy
     from moneyclaw.llm.cache import ResponseCache
     from moneyclaw.llm.cost_tracker import CostTracker
-    from moneyclaw.llm.providers.litellm_provider import LiteLLMProvider
-    from moneyclaw.llm.providers.ollama import OllamaProvider
-    from moneyclaw.llm.router import LLMLayer, LLMRouter
+    from moneyclaw.llm.model_discovery import ModelDiscoveryService
+    from moneyclaw.llm.model_registry import SmartModelRegistry
+    from moneyclaw.llm.performance_tracker import PerformanceTracker
+    from moneyclaw.llm.smart_router import SmartRouter
     from moneyclaw.plugins.loader import discover_strategies
     from moneyclaw.plugins.registry import StrategyRegistry
     from moneyclaw.scheduler.engine import Scheduler
 
     settings = Settings()
 
-    # Build LLM providers
-    providers: dict[LLMLayer, Any] = {}
+    # Initialize SmartRouter components
+    discovery = ModelDiscoveryService(timeout=settings.llm.model_discovery_timeout)
+    registry = SmartModelRegistry(discovery_service=discovery)
+    cost_tracker = CostTracker(daily_budget=settings.llm.daily_llm_budget)
+    budget_policy = BudgetPolicy(
+        daily_budget=settings.llm.daily_llm_budget,
+        caution_threshold=settings.llm.budget_caution_threshold,
+        critical_threshold=settings.llm.budget_critical_threshold,
+        enable_auto_downgrade=settings.llm.enable_auto_downgrade,
+        reserve_for_urgent=settings.llm.reserve_budget_for_urgent,
+    )
+    budget_manager = BudgetManager(cost_tracker=cost_tracker, policy=budget_policy)
+    performance_tracker = PerformanceTracker()
 
-    # Layer 1: local (Ollama) — always try
-    providers[LLMLayer.LOCAL] = OllamaProvider(
-        model=settings.llm.ollama_model,
-        base_url=settings.llm.ollama_base_url,
+    llm = SmartRouter(
+        registry=registry,
+        cost_tracker=cost_tracker,
+        budget_manager=budget_manager,
+        performance_tracker=performance_tracker,
+        cache=ResponseCache(),
     )
 
-    # Layer 2: cheap APIs
-    if settings.llm.deepseek_api_key:
-        providers[LLMLayer.CHEAP] = LiteLLMProvider(
-            model="deepseek/deepseek-chat",
-            api_key=settings.llm.deepseek_api_key,
-        )
-    elif settings.llm.groq_api_key:
-        providers[LLMLayer.CHEAP] = LiteLLMProvider(
-            model="groq/llama-3.3-70b-versatile",
-            api_key=settings.llm.groq_api_key,
-        )
-
-    # Layer 3: premium
-    if settings.llm.anthropic_api_key:
-        providers[LLMLayer.PREMIUM] = LiteLLMProvider(
-            model="claude-sonnet-4-5-20250929",
-            api_key=settings.llm.anthropic_api_key,
-        )
-    elif settings.llm.openai_api_key:
-        providers[LLMLayer.PREMIUM] = LiteLLMProvider(
-            model="gpt-4o",
-            api_key=settings.llm.openai_api_key,
-        )
-
-    cost_tracker = CostTracker(daily_budget=settings.llm.daily_llm_budget)
-    llm = LLMRouter(providers=providers, cost_tracker=cost_tracker, cache=ResponseCache())
+    # Discover and initialize available models
+    click.echo("Discovering available LLM models...")
+    await llm.initialize()
+    available_models = llm.get_available_models()
 
     # Memory
     memory = Memory(db_path=settings.db_path)
@@ -212,7 +205,16 @@ async def _run(web: bool, telegram: bool) -> None:
 
     mode = "DRY RUN" if dry_run else "LIVE"
     click.echo(f"MoneyClaw running [{mode}] — {len(strategy_classes)} strategies loaded")
-    click.echo(f"LLM layers: {', '.join(layer.name for layer in providers)}")
+
+    # Show discovered models
+    model_info = []
+    for m in available_models[:5]:  # Show top 5 models
+        model_info.append(f"{m.display_name} ({m.cost_tier.name})")
+    if len(available_models) > 5:
+        model_info.append(f"... and {len(available_models) - 5} more")
+    click.echo(f"LLM models: {', '.join(model_info)}")
+    click.echo(f"Budget: ${settings.llm.daily_llm_budget:.2f}/day")
+
     if web:
         click.echo(f"Dashboard: http://{settings.web_host}:{settings.web_port}")
 
@@ -320,6 +322,46 @@ def cost() -> None:
     click.echo(f"  Today cost: ${tracker.today_cost:.4f}")
     click.echo(f"  Today calls: {tracker.today_calls}")
     click.echo(f"  Over budget: {'Yes' if tracker.is_over_budget() else 'No'}")
+
+
+@main.command()
+def models() -> None:
+    """List discovered LLM models."""
+    asyncio.run(_models())
+
+
+async def _models() -> None:
+    """Async model discovery and display."""
+    from moneyclaw.config.settings import Settings
+    from moneyclaw.llm.model_discovery import ModelDiscoveryService
+    from moneyclaw.llm.model_registry import SmartModelRegistry
+
+    settings = Settings()
+    discovery = ModelDiscoveryService(timeout=settings.llm.model_discovery_timeout)
+    registry = SmartModelRegistry(discovery_service=discovery)
+
+    click.echo("Discovering models...")
+    models = await registry.discover()
+
+    if not models:
+        click.echo("No models found. Check your API keys in .env file.")
+        return
+
+    # Group by provider
+    by_provider: dict[str, list] = {}
+    for m in models:
+        by_provider.setdefault(m.provider, []).append(m)
+
+    for provider, provider_models in sorted(by_provider.items()):
+        click.echo(f"\n{provider.upper()}:")
+        for m in sorted(provider_models, key=lambda x: x.capability_score, reverse=True):
+            cost_str = f"${m.estimated_cost_per_call:.6f}" if m.cost_per_1k_input > 0 else "FREE"
+            click.echo(
+                f"  {m.display_name:30s} "
+                f"cap={m.capability_score:.2f} "
+                f"cost={cost_str:12s} "
+                f"ctx={m.context_length:,}"
+            )
 
 
 @main.command()

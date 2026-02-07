@@ -14,22 +14,35 @@ class TelegramSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    """LLM provider configuration."""
+    """LLM provider configuration — SmartRouter auto-discovers models from API keys."""
 
-    # Layer 1: local
+    # Provider API keys — SmartRouter will auto-discover available models
+    # Just provide the keys, no need to specify model names
+
+    # Local models (Ollama)
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:7b"
 
-    # Layer 2: cheap
-    deepseek_api_key: str = ""
-    groq_api_key: str = ""
-
-    # Layer 3: premium
+    # Cloud providers — SmartRouter discovers models automatically
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    deepseek_api_key: str = ""
+    groq_api_key: str = ""
+    google_api_key: str = ""  # For Gemini
 
-    # Budget
-    daily_llm_budget: float = 1.0  # USD
+    # Budget and routing configuration
+    daily_llm_budget: float = 5.0  # USD — daily spending limit
+    budget_caution_threshold: float = 0.6  # Enter caution mode at 60% usage
+    budget_critical_threshold: float = 0.85  # Enter critical mode at 85% usage
+    reserve_budget_for_urgent: float = 0.1  # Reserve 10% for urgent tasks
+    enable_auto_downgrade: bool = True  # Automatically downgrade when budget is low
+
+    # Performance learning
+    enable_performance_learning: bool = True  # Track and learn from model performance
+    min_calls_for_learning: int = 3  # Minimum calls before using performance data
+
+    # Model discovery
+    model_discovery_timeout: float = 10.0  # Timeout for model discovery (seconds)
+    model_cache_ttl: int = 900  # Cache discovered models for 15 minutes
 
 
 class RiskSettings(BaseSettings):
