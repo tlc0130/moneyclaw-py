@@ -1,0 +1,83 @@
+[project]
+name = "moneyclaw"
+version = "0.1.0"
+description = "7x24 AI Agent that saves and makes money autonomously"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "MoneyClaw Contributors" }]
+keywords = ["ai", "agent", "finance", "trading", "savings", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+]
+
+dependencies = [
+    # LLM
+    "litellm>=1.50",
+    "ollama>=0.4",
+    # Web framework
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    # Telegram
+    "aiogram>=3.13",
+    # Trading & finance
+    "ccxt>=4.4",
+    # HTTP
+    "httpx>=0.28",
+    # Data
+    "duckdb>=1.1",
+    "aiosqlite>=0.20",
+    # Scheduling
+    "apscheduler>=3.10,<4",
+    # Config
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    # Utilities
+    "structlog>=24.4",
+    "rich>=13.9",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+scraping = [
+    "playwright>=1.49",
+]
+
+[project.scripts]
+moneyclaw = "moneyclaw.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["moneyclaw"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "live: tests that require real API keys",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "ASYNC", "B", "A", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
