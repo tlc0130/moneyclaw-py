@@ -1,0 +1,5 @@
+# Crypto Funding Rate Arbitrage — config.yaml
+# Customize funding rate threshold
+
+# Minimum funding rate to trigger (0.001 = 0.1% per 8h, ~36% annualized)
+threshold: 0.001

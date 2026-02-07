@@ -48,11 +48,7 @@ def discover_strategies(strategies_dir: str | Path) -> list[type[Strategy]]:
             # Find Strategy subclasses
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
-                if (
-                    isinstance(attr, type)
-                    and issubclass(attr, Strategy)
-                    and attr is not Strategy
-                ):
+                if isinstance(attr, type) and issubclass(attr, Strategy) and attr is not Strategy:
                     found.append(attr)
                     log.info("plugins.discovered", strategy=attr.name, module=module_name)
 

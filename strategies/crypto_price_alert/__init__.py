@@ -5,17 +5,28 @@ The simplest possible strategy: no LLM needed, just price checks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 import structlog
 
-from moneyclaw.plugins.base import Opportunity, Result, Score, Strategy
+from moneyclaw.plugins.base import Opportunity, Result, Score, Strategy, load_strategy_config
 
 log = structlog.get_logger()
 
 # CoinGecko free API (no key needed, 30 calls/min)
 COINGECKO_API = "https://api.coingecko.com/api/v3"
+
+DEFAULT_ALERTS = [
+    {"coin": "bitcoin", "condition": "above", "threshold": 100000, "message": "BTC above $100k!"},
+    {
+        "coin": "bitcoin",
+        "condition": "below",
+        "threshold": 50000,
+        "message": "BTC below $50k — buy opportunity?",
+    },
+    {"coin": "ethereum", "condition": "below", "threshold": 2000, "message": "ETH below $2k"},
+]
 
 
 @dataclass
@@ -38,11 +49,9 @@ class CryptoPriceAlert(Strategy):
     min_llm_layer = 0
 
     def __init__(self, alerts: list[PriceAlert] | None = None) -> None:
-        self._alerts = alerts or [
-            PriceAlert("bitcoin", "above", 100000, "BTC above $100k!"),
-            PriceAlert("bitcoin", "below", 50000, "BTC below $50k — buy opportunity?"),
-            PriceAlert("ethereum", "below", 2000, "ETH below $2k"),
-        ]
+        cfg = load_strategy_config(CryptoPriceAlert)
+        alert_defs = cfg.get("alerts", DEFAULT_ALERTS) if not alerts else None
+        self._alerts = alerts or [PriceAlert(**a) for a in alert_defs]
         self._last_prices: dict[str, float] = {}
         self._triggered: set[str] = set()
 
@@ -64,9 +73,12 @@ class CryptoPriceAlert(Strategy):
             alert_key = f"{alert.coin}_{alert.condition}_{alert.threshold}"
             triggered = False
 
-            if alert.condition == "above" and price > alert.threshold:
-                triggered = True
-            elif alert.condition == "below" and price < alert.threshold:
+            if (
+                alert.condition == "above"
+                and price > alert.threshold
+                or alert.condition == "below"
+                and price < alert.threshold
+            ):
                 triggered = True
 
             if triggered and alert_key not in self._triggered:
@@ -74,9 +86,18 @@ class CryptoPriceAlert(Strategy):
                 opportunities.append(
                     Opportunity(
                         strategy_name=self.name,
-                        title=alert.message or f"{alert.coin}: ${price:,.2f} ({alert.condition} ${alert.threshold:,.2f})",
+                        title=(
+                            alert.message
+                            or f"{alert.coin}: ${price:,.2f}"
+                            f" ({alert.condition} ${alert.threshold:,.2f})"
+                        ),
                         money_involved=0,  # Alerts don't involve money
-                        data={"coin": alert.coin, "price": price, "condition": alert.condition, "threshold": alert.threshold},
+                        data={
+                            "coin": alert.coin,
+                            "price": price,
+                            "condition": alert.condition,
+                            "threshold": alert.threshold,
+                        },
                         pre_score=0.8,  # Pre-scored, no LLM needed
                     )
                 )

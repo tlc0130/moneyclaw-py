@@ -31,11 +31,14 @@ dependencies = [
     # Data
     "duckdb>=1.1",
     "aiosqlite>=0.20",
+    "yfinance>=0.2",
+    "feedparser>=6.0",
     # Scheduling
     "apscheduler>=3.10,<4",
     # Config
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
     # Utilities
     "structlog>=24.4",
     "rich>=13.9",
@@ -77,6 +80,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "ASYNC", "B", "A", "SIM"]
+ignore = [
+    "B027",      # empty methods in ABC without @abstractmethod (intentional hooks)
+    "ASYNC109",  # async function with timeout param (intentional API)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"moneyclaw/interface/web/app.py" = ["E501"]  # HTML templates in f-strings
 
 [tool.mypy]
 python_version = "3.12"

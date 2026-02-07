@@ -1,0 +1,14 @@
+# Smart Rebalance — config.yaml
+# Customize target allocation and thresholds
+
+# Target allocation (must sum to 1.0)
+targets:
+  BTC/USDT: 0.60
+  ETH/USDT: 0.30
+  USDT: 0.10
+
+# Rebalance when any asset deviates by more than this (0.05 = 5%)
+deviation_threshold: 0.05
+
+# Exchange to use for balance queries and trades
+exchange_id: binance

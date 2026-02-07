@@ -154,7 +154,8 @@ class TelegramBot:
         @dp.message(F.text)
         async def fallback(message: Message) -> None:
             await message.answer(
-                "I don't understand that command. Try /status, /strategies, /cost, or /ask <question>."
+                "I don't understand that command."
+                " Try /status, /strategies, /cost, or /ask <question>."
             )
 
     @property

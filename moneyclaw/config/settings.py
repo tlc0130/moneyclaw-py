@@ -39,6 +39,39 @@ class RiskSettings(BaseSettings):
     max_daily_loss: float = 100.0  # Stop-loss per day
     approval_threshold: float = 50.0  # Require approval above this amount
     cooldown_after_losses: int = 3  # Pause after N consecutive losses
+    per_strategy_daily_loss: float = 30.0  # Per-strategy daily loss cap (0 = disabled)
+    max_position_ratio: float = 0.5  # Max ratio of portfolio in single asset (0-1)
+    dry_run: bool = True  # Default: simulate all trades
+
+
+class ExchangeConfig(BaseSettings):
+    """Config for a single exchange connection."""
+
+    api_key: str = ""
+    secret: str = ""
+    password: str = ""  # Some exchanges need a passphrase
+
+
+class ExchangeSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="EXCHANGE_")
+
+    # Default exchange for strategies that don't specify one
+    default_exchange: str = "binance"
+    dry_run: bool = True  # Global dry_run override
+    # Per-exchange configs loaded from env: BINANCE_API_KEY, etc.
+    binance_api_key: str = ""
+    binance_secret: str = ""
+    okx_api_key: str = ""
+    okx_secret: str = ""
+    okx_password: str = ""
+
+
+class DataSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="DATA_")
+
+    duckdb_path: str = "data/market.duckdb"
+    price_poll_interval: int = 300  # 5 minutes
+    news_poll_interval: int = 900  # 15 minutes
 
 
 class Settings(BaseSettings):
@@ -54,6 +87,8 @@ class Settings(BaseSettings):
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
+    exchange: ExchangeSettings = Field(default_factory=ExchangeSettings)
+    data: DataSettings = Field(default_factory=DataSettings)
 
     # General
     db_path: str = "data/moneyclaw.db"

@@ -10,8 +10,11 @@ from moneyclaw.llm.router import LLMLayer, LLMRouter, TaskRequest
 
 log = structlog.get_logger()
 
-PLANNER_SYSTEM = """You are MoneyClaw's strategy planner. Your job is to analyze recent performance
-and plan the next period's focus. Be concise and actionable. Output a prioritized list of actions."""
+PLANNER_SYSTEM = (
+    "You are MoneyClaw's strategy planner. Your job is to analyze recent"
+    " performance and plan the next period's focus. Be concise and actionable."
+    " Output a prioritized list of actions."
+)
 
 
 @dataclass

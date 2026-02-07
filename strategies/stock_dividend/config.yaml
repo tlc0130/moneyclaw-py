@@ -1,0 +1,17 @@
+# Stock Dividend Tracker — config.yaml
+# Customize watchlist and yield filter
+
+watchlist:
+  - VZ
+  - T
+  - MO
+  - XOM
+  - CVX
+  - PFE
+  - IBM
+  - KO
+  - PEP
+  - JNJ
+
+# Minimum dividend yield to trigger alert (0.04 = 4%)
+min_yield: 0.04

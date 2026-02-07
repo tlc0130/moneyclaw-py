@@ -12,9 +12,7 @@ from strategies.crypto_price_alert import CryptoPriceAlert, PriceAlert
 class TestCryptoPriceAlert:
     @pytest.mark.asyncio
     async def test_scan_detects_threshold_crossing(self) -> None:
-        strategy = CryptoPriceAlert(
-            alerts=[PriceAlert("bitcoin", "above", 50000, "BTC mooning!")]
-        )
+        strategy = CryptoPriceAlert(alerts=[PriceAlert("bitcoin", "above", 50000, "BTC mooning!")])
 
         # Mock price above threshold
         with patch.object(
@@ -30,9 +28,7 @@ class TestCryptoPriceAlert:
 
     @pytest.mark.asyncio
     async def test_scan_no_alert_when_below_threshold(self) -> None:
-        strategy = CryptoPriceAlert(
-            alerts=[PriceAlert("bitcoin", "above", 100000)]
-        )
+        strategy = CryptoPriceAlert(alerts=[PriceAlert("bitcoin", "above", 100000)])
 
         with patch.object(
             CryptoPriceAlert,
@@ -45,9 +41,7 @@ class TestCryptoPriceAlert:
 
     @pytest.mark.asyncio
     async def test_scan_below_condition(self) -> None:
-        strategy = CryptoPriceAlert(
-            alerts=[PriceAlert("ethereum", "below", 3000, "ETH cheap!")]
-        )
+        strategy = CryptoPriceAlert(alerts=[PriceAlert("ethereum", "below", 3000, "ETH cheap!")])
 
         with patch.object(
             CryptoPriceAlert,
@@ -61,9 +55,7 @@ class TestCryptoPriceAlert:
 
     @pytest.mark.asyncio
     async def test_alert_only_fires_once(self) -> None:
-        strategy = CryptoPriceAlert(
-            alerts=[PriceAlert("bitcoin", "above", 50000)]
-        )
+        strategy = CryptoPriceAlert(alerts=[PriceAlert("bitcoin", "above", 50000)])
 
         mock_fetch = AsyncMock(return_value={"bitcoin": 55000})
         with patch.object(CryptoPriceAlert, "_fetch_prices", mock_fetch):
@@ -74,25 +66,32 @@ class TestCryptoPriceAlert:
 
     @pytest.mark.asyncio
     async def test_alert_resets_when_condition_unmet(self) -> None:
-        strategy = CryptoPriceAlert(
-            alerts=[PriceAlert("bitcoin", "above", 50000)]
-        )
+        strategy = CryptoPriceAlert(alerts=[PriceAlert("bitcoin", "above", 50000)])
 
         # Trigger
         with patch.object(
-            CryptoPriceAlert, "_fetch_prices", new_callable=AsyncMock, return_value={"bitcoin": 55000}
+            CryptoPriceAlert,
+            "_fetch_prices",
+            new_callable=AsyncMock,
+            return_value={"bitcoin": 55000},
         ):
             await strategy.scan()
 
         # Price drops below — should reset
         with patch.object(
-            CryptoPriceAlert, "_fetch_prices", new_callable=AsyncMock, return_value={"bitcoin": 45000}
+            CryptoPriceAlert,
+            "_fetch_prices",
+            new_callable=AsyncMock,
+            return_value={"bitcoin": 45000},
         ):
             await strategy.scan()
 
         # Price rises again — should fire again
         with patch.object(
-            CryptoPriceAlert, "_fetch_prices", new_callable=AsyncMock, return_value={"bitcoin": 55000}
+            CryptoPriceAlert,
+            "_fetch_prices",
+            new_callable=AsyncMock,
+            return_value={"bitcoin": 55000},
         ):
             opps = await strategy.scan()
             assert len(opps) == 1

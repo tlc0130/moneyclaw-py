@@ -1,0 +1,20 @@
+# Crypto Price Alert — config.yaml
+# Customize which coins/thresholds to monitor
+
+alerts:
+  - coin: bitcoin
+    condition: above
+    threshold: 100000
+    message: "BTC above $100k!"
+  - coin: bitcoin
+    condition: below
+    threshold: 50000
+    message: "BTC below $50k — buy opportunity?"
+  - coin: ethereum
+    condition: below
+    threshold: 2000
+    message: "ETH below $2k"
+  - coin: solana
+    condition: above
+    threshold: 300
+    message: "SOL above $300!"

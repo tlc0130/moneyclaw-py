@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -72,3 +75,35 @@ class Strategy(ABC):
 
     async def teardown(self) -> None:
         """Called when strategy is unloaded. Override for cleanup."""
+
+
+def load_strategy_config(strategy_cls: type[Strategy]) -> dict[str, Any]:
+    """Load config.yaml from the strategy's directory.
+
+    Looks for ``config.yaml`` next to the module that defines *strategy_cls*.
+    Returns an empty dict if the file doesn't exist or can't be parsed.
+    """
+    module_name = strategy_cls.__module__
+    module = sys.modules.get(module_name)
+    if module is None:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            return {}
+
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        return {}
+
+    config_path = Path(module_file).parent / "config.yaml"
+    if not config_path.exists():
+        return {}
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}

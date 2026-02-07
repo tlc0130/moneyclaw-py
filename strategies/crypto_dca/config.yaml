@@ -1,0 +1,7 @@
+# Crypto DCA — config.yaml
+# Customize DCA parameters
+
+coin: bitcoin
+symbol: BTC/USDT
+amount_usd: 10.0
+exchange_id: binance

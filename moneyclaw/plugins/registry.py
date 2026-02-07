@@ -38,7 +38,11 @@ class StrategyRegistry:
         return False
 
     def disable(self, name: str) -> bool:
-        return bool(self._enabled.discard(name)) or name in self._strategies and name not in self._enabled
+        return (
+            bool(self._enabled.discard(name))
+            or name in self._strategies
+            and name not in self._enabled
+        )
 
     def get(self, name: str) -> Strategy | None:
         return self._strategies.get(name)

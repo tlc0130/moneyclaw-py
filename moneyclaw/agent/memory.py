@@ -69,8 +69,9 @@ class Memory:
         assert self._db
         now = time.time()
         await self._db.execute(
-            "INSERT OR REPLACE INTO opportunities (id, strategy, title, data, score, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+            "INSERT OR REPLACE INTO opportunities"
+            " (id, strategy, title, data, score, status, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
             (opp.id, opp.strategy_name, opp.title, json.dumps(opp.data), 0.0, now, now),
         )
         await self._db.commit()
@@ -87,7 +88,8 @@ class Memory:
 
         # Insert result
         await self._db.execute(
-            "INSERT INTO results (opportunity_id, profit_loss, details, executed_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO results (opportunity_id, profit_loss, details, executed_at)"
+            " VALUES (?, ?, ?, ?)",
             (opp.id, result.profit_loss, json.dumps(result.details), now),
         )
 
@@ -96,13 +98,15 @@ class Memory:
         if result.profit_loss >= 0:
             await self._db.execute(
                 "INSERT INTO daily_pnl (date, total_profit, trade_count) VALUES (?, ?, 1) "
-                "ON CONFLICT(date) DO UPDATE SET total_profit = total_profit + ?, trade_count = trade_count + 1",
+                "ON CONFLICT(date) DO UPDATE SET"
+                " total_profit = total_profit + ?, trade_count = trade_count + 1",
                 (today, result.profit_loss, result.profit_loss),
             )
         else:
             await self._db.execute(
                 "INSERT INTO daily_pnl (date, total_loss, trade_count) VALUES (?, ?, 1) "
-                "ON CONFLICT(date) DO UPDATE SET total_loss = total_loss + ?, trade_count = trade_count + 1",
+                "ON CONFLICT(date) DO UPDATE SET"
+                " total_loss = total_loss + ?, trade_count = trade_count + 1",
                 (today, abs(result.profit_loss), abs(result.profit_loss)),
             )
 
@@ -128,18 +132,26 @@ class Memory:
     async def get_pending(self) -> list[dict]:
         assert self._db
         async with self._db.execute(
-            "SELECT id, strategy, title, data, created_at FROM opportunities WHERE status = 'pending' ORDER BY created_at DESC"
+            "SELECT id, strategy, title, data, created_at FROM opportunities"
+            " WHERE status = 'pending' ORDER BY created_at DESC"
         ) as cursor:
             rows = await cursor.fetchall()
             return [
-                {"id": r[0], "strategy": r[1], "title": r[2], "data": json.loads(r[3]), "created_at": r[4]}
+                {
+                    "id": r[0],
+                    "strategy": r[1],
+                    "title": r[2],
+                    "data": json.loads(r[3]),
+                    "created_at": r[4],
+                }
                 for r in rows
             ]
 
     async def approve(self, opp_id: str) -> bool:
         assert self._db
         result = await self._db.execute(
-            "UPDATE opportunities SET status = 'approved', updated_at = ? WHERE id = ? AND status = 'pending'",
+            "UPDATE opportunities SET status = 'approved', updated_at = ?"
+            " WHERE id = ? AND status = 'pending'",
             (time.time(), opp_id),
         )
         await self._db.commit()
@@ -148,7 +160,8 @@ class Memory:
     async def reject(self, opp_id: str) -> bool:
         assert self._db
         result = await self._db.execute(
-            "UPDATE opportunities SET status = 'rejected', updated_at = ? WHERE id = ? AND status = 'pending'",
+            "UPDATE opportunities SET status = 'rejected', updated_at = ?"
+            " WHERE id = ? AND status = 'pending'",
             (time.time(), opp_id),
         )
         await self._db.commit()
