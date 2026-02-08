@@ -58,8 +58,19 @@ async def _run(web: bool, telegram: bool) -> None:
 
     settings = Settings()
 
-    # Initialize SmartRouter components
-    discovery = ModelDiscoveryService(timeout=settings.llm.model_discovery_timeout)
+    # Initialize SmartRouter components with API keys from settings
+    api_keys = {
+        "OPENAI_API_KEY": settings.llm.openai_api_key,
+        "ANTHROPIC_API_KEY": settings.llm.anthropic_api_key,
+        "DEEPSEEK_API_KEY": settings.llm.deepseek_api_key,
+        "GROQ_API_KEY": settings.llm.groq_api_key,
+        "GOOGLE_API_KEY": settings.llm.google_api_key,
+        "MOONSHOT_API_KEY": settings.llm.moonshot_api_key,
+    }
+    discovery = ModelDiscoveryService(
+        timeout=settings.llm.llm_discovery_timeout,
+        api_keys={k: v for k, v in api_keys.items() if v},  # 只传递非空的key
+    )
     registry = SmartModelRegistry(discovery_service=discovery)
     cost_tracker = CostTracker(daily_budget=settings.llm.daily_llm_budget)
     budget_policy = BudgetPolicy(
@@ -337,7 +348,20 @@ async def _models() -> None:
     from moneyclaw.llm.model_registry import SmartModelRegistry
 
     settings = Settings()
-    discovery = ModelDiscoveryService(timeout=settings.llm.model_discovery_timeout)
+
+    # Pass API keys from settings
+    api_keys = {
+        "OPENAI_API_KEY": settings.llm.openai_api_key,
+        "ANTHROPIC_API_KEY": settings.llm.anthropic_api_key,
+        "DEEPSEEK_API_KEY": settings.llm.deepseek_api_key,
+        "GROQ_API_KEY": settings.llm.groq_api_key,
+        "GOOGLE_API_KEY": settings.llm.google_api_key,
+        "MOONSHOT_API_KEY": settings.llm.moonshot_api_key,
+    }
+    discovery = ModelDiscoveryService(
+        timeout=settings.llm.llm_discovery_timeout,
+        api_keys={k: v for k, v in api_keys.items() if v},
+    )
     registry = SmartModelRegistry(discovery_service=discovery)
 
     click.echo("Discovering models...")

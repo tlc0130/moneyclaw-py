@@ -51,6 +51,11 @@ class SmartRouter:
         self._providers: dict[str, UnifiedProvider] = {}
         self._initialized = False
 
+    @property
+    def cost_tracker(self) -> CostTracker:
+        """Public access to cost tracker for external reporting."""
+        return self._cost_tracker
+
     async def initialize(self) -> None:
         """初始化路由器 — 触发模型发现."""
         if self._initialized:
@@ -82,6 +87,10 @@ class SmartRouter:
                         model=model.model_id.split("/")[-1],
                         base_url=base_url,
                     )
+                    # 验证 Ollama 是否可用
+                    if not await inner_provider.is_available():
+                        log.warning("smart_router.ollama_not_available", model=model.model_id)
+                        continue
                 else:
                     inner_provider = LiteLLMProvider(model=model.model_id)
 
@@ -273,30 +282,40 @@ class SmartRouter:
 
         for provider in self._providers.values():
             model = provider.model_profile
+            
+            # Debug log
+            log.info("smart_router.check_candidate", model=model.model_id)
 
             # 基本检查
             if not model.is_available:
+                log.info("smart_router.skip", reason="unavailable", model=model.model_id)
                 continue
 
             # 功能要求检查
             if require_tools and not model.supports_tools:
+                log.info("smart_router.skip", reason="no_tools", model=model.model_id)
                 continue
             if require_vision and not model.supports_vision:
+                log.info("smart_router.skip", reason="no_vision", model=model.model_id)
                 continue
             if require_json_mode and not model.supports_json_mode:
+                log.info("smart_router.skip", reason="no_json", model=model.model_id)
                 continue
 
             # 成本检查
             if max_cost > 0 and model.estimated_cost_per_call > max_cost:
+                log.info("smart_router.skip", reason="too_expensive", model=model.model_id, cost=model.estimated_cost_per_call, max=max_cost)
                 continue
 
             # 能力检查 — 高复杂度任务需要高能力模型
             min_capability = complexity * 0.8
             if model.capability_score < min_capability:
+                log.info("smart_router.skip", reason="low_capability", model=model.model_id, score=model.capability_score, min=min_capability)
                 continue
 
             # 任务匹配检查
             if not model.matches_task(task_type, min_score=0.5):
+                log.info("smart_router.skip", reason="task_mismatch", model=model.model_id, task=task_type, score=model.task_strengths.get(task_type, 0))
                 continue
 
             candidates.append(provider)
@@ -426,9 +445,17 @@ class SmartRouter:
         return hashlib.sha256(raw.encode()).hexdigest()
 
     # 便捷方法
-    async def complete(self, prompt: str, **kwargs) -> LLMResponse:
-        """简化的完成接口."""
-        request = TaskRequest(prompt=prompt, **kwargs)
+    async def complete(self, prompt: str | TaskRequest, **kwargs) -> LLMResponse:
+        """简化的完成接口.
+
+        Args:
+            prompt: 提示词字符串或 TaskRequest 对象
+            **kwargs: 其他参数（当 prompt 为字符串时）
+        """
+        if isinstance(prompt, TaskRequest):
+            request = prompt
+        else:
+            request = TaskRequest(prompt=prompt, **kwargs)
         return await self.route(request)
 
     def get_available_models(self) -> list[ModelProfile]:

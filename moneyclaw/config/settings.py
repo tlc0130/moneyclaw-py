@@ -16,6 +16,13 @@ class TelegramSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     """LLM provider configuration — SmartRouter auto-discovers models from API keys."""
 
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        protected_namespaces=("settings_",),
+        extra="ignore",
+    )
+
     # Provider API keys — SmartRouter will auto-discover available models
     # Just provide the keys, no need to specify model names
 
@@ -28,6 +35,7 @@ class LLMSettings(BaseSettings):
     deepseek_api_key: str = ""
     groq_api_key: str = ""
     google_api_key: str = ""  # For Gemini
+    moonshot_api_key: str = ""  # For Moonshot (月之暗面/Kimi)
 
     # Budget and routing configuration
     daily_llm_budget: float = 5.0  # USD — daily spending limit
@@ -40,9 +48,9 @@ class LLMSettings(BaseSettings):
     enable_performance_learning: bool = True  # Track and learn from model performance
     min_calls_for_learning: int = 3  # Minimum calls before using performance data
 
-    # Model discovery
-    model_discovery_timeout: float = 10.0  # Timeout for model discovery (seconds)
-    model_cache_ttl: int = 900  # Cache discovered models for 15 minutes
+    # LLM discovery settings (renamed to avoid pydantic protected namespace warning)
+    llm_discovery_timeout: float = 10.0  # Timeout for model discovery (seconds)
+    llm_cache_ttl: int = 900  # Cache discovered models for 15 minutes
 
 
 class RiskSettings(BaseSettings):

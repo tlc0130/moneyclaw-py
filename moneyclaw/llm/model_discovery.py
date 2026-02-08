@@ -66,6 +66,15 @@ PROVIDER_CONFIGS: dict[str, dict[str, Any]] = {
         "extract_id": lambda m: m.get("name", "").replace("models/", ""),
         "filter": lambda m: m.get("name", "").startswith("models/gemini"),
     },
+    "moonshot": {
+        # Moonshot (月之暗面) API 模型列表
+        "list_url": "https://api.moonshot.cn/v1/models",
+        "api_key_env": "MOONSHOT_API_KEY",
+        "model_key": "id",
+        "extract_id": lambda m: m.get("id", ""),
+        "header_name": "Authorization",
+        "header_format": "Bearer {key}",
+    },
 }
 
 
@@ -86,9 +95,10 @@ class ModelDiscoveryService:
     并创建对应的ModelProfile。
     """
 
-    def __init__(self, timeout: float = 10.0) -> None:
+    def __init__(self, timeout: float = 10.0, api_keys: dict[str, str] | None = None) -> None:
         self._timeout = timeout
         self._results: dict[str, DiscoveryResult] = {}
+        self._api_keys = api_keys or {}
 
     async def discover_all(
         self,
@@ -141,13 +151,16 @@ class ModelDiscoveryService:
         """检查是否应该发现该Provider的模型."""
         import os
 
-        # 检查API key
+        # 检查API key - 优先使用传入的api_keys，其次环境变量
         api_key_env = config.get("api_key_env")
-        if api_key_env and not os.environ.get(api_key_env):
-            # Ollama特殊处理：不需要API key
-            if provider == "ollama":
-                return True
-            return False
+        if api_key_env:
+            # 先从传入的api_keys查找，再从环境变量查找
+            api_key = self._api_keys.get(api_key_env) or os.environ.get(api_key_env)
+            if not api_key:
+                # Ollama特殊处理：不需要API key
+                if provider == "ollama":
+                    return True
+                return False
 
         return True
 
@@ -200,7 +213,8 @@ class ModelDiscoveryService:
 
         api_key_env = config.get("api_key_env")
         if api_key_env:
-            api_key = os.environ.get(api_key_env, "")
+            # 优先使用传入的api_keys，其次环境变量
+            api_key = self._api_keys.get(api_key_env) or os.environ.get(api_key_env, "")
             if api_key:
                 header_name = config.get("header_name", "Authorization")
                 header_format = config.get("header_format", "Bearer {key}")
@@ -213,10 +227,20 @@ class ModelDiscoveryService:
                     headers[header_name] = header_format.format(key=api_key)
 
         # 发送请求
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.get(list_url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.get(list_url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.ConnectError as e:
+            log.warning("discovery.connection_failed", provider=provider, url=list_url, error=str(e))
+            return []
+        except httpx.TimeoutException as e:
+            log.warning("discovery.timeout", provider=provider, url=list_url, error=str(e))
+            return []
+        except httpx.HTTPStatusError as e:
+            log.warning("discovery.http_error", provider=provider, url=list_url, status=e.response.status_code)
+            return []
 
         # 解析模型列表
         model_data_list = data.get("data", []) if isinstance(data, dict) else data

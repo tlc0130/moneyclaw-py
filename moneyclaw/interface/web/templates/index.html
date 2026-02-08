@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoneyClaw Command Center</title>
+    <!-- Tailwind for overlay UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cyan: {
+                            400: '#22d3ee',
+                            500: '#06b6d4',
+                            600: '#0891b2',
+                            900: '#164e63',
+                            950: '#083344',
+                        }
+                    },
+                    fontFamily: {
+                        orbitron: ['Orbitron', 'sans-serif'],
+                        rajdhani: ['Rajdhani', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Three.js from CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Cyberpunk font -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-black text-cyan-400 overflow-hidden font-mono antialiased selection:bg-cyan-500 selection:text-black">
+
+    <!-- 3D Canvas Layer (Background) -->
+    <canvas id="world" class="fixed inset-0 z-0"></canvas>
+
+    <!-- UI Overlay Layer (Foreground) -->
+    <div id="ui-layer" class="relative z-10 w-full h-full pointer-events-none flex flex-col justify-between p-6">
+        
+        <!-- Top Header HUD -->
+        <header class="flex justify-between items-start pointer-events-auto w-full">
+            <div class="hud-panel glass p-4 rounded-lg border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)] bg-black/60 backdrop-blur-sm">
+                <h1 class="text-4xl font-bold tracking-tighter font-orbitron text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-600 drop-shadow-[0_0_10px_rgba(6,182,212,0.8)]">
+                    MONEYCLAW <span class="text-xs align-top text-cyan-600">v0.1.0</span>
+                </h1>
+                <div class="flex items-center gap-3 mt-2 text-xs font-rajdhani uppercase tracking-widest text-cyan-300/80">
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> SYSTEM ONLINE</span>
+                    <span class="text-cyan-800">|</span>
+                    <span id="tick-counter">Tick #0</span>
+                </div>
+            </div>
+
+            <!-- Stats HUD -->
+            <div class="flex gap-4">
+                <div class="hud-stat glass p-3 rounded border border-cyan-500/20 w-32 bg-black/60 backdrop-blur-sm">
+                    <div class="text-[10px] text-cyan-500 uppercase tracking-widest mb-1">P&L Today</div>
+                    <div id="stat-pnl" class="text-2xl font-bold font-orbitron text-white">$0.00</div>
+                </div>
+                 <div class="hud-stat glass p-3 rounded border border-cyan-500/20 w-32 bg-black/60 backdrop-blur-sm">
+                    <div class="text-[10px] text-cyan-500 uppercase tracking-widest mb-1">Risk Level</div>
+                    <div id="stat-risk" class="text-2xl font-bold font-orbitron text-green-400">LOW</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area (Center - Invisible to let 3D show through) -->
+        <main class="flex-1 flex items-center justify-center pointer-events-none w-full">
+            <!-- 3D Scene content will be visible here -->
+            <div id="loading-overlay" class="text-center">
+                <div class="text-cyan-500 font-orbitron text-xl animate-pulse tracking-widest">INITIALIZING NEURAL INTERFACE...</div>
+            </div>
+        </main>
+
+        <!-- Bottom HUD -->
+        <footer class="flex justify-between items-end gap-6 pointer-events-auto h-1/3 w-full">
+            
+            <!-- Strategy Panel (Bottom Left) -->
+            <div class="hud-panel glass w-1/3 h-full flex flex-col p-4 rounded-lg border border-cyan-500/30 backdrop-blur-md bg-black/60 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+                <h2 class="text-lg font-bold font-orbitron mb-3 flex items-center gap-2 text-cyan-300 border-b border-cyan-500/30 pb-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 01-2 2h2a2 2 0 012-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                    ACTIVE STRATEGIES
+                </h2>
+                <div id="strategy-list" class="space-y-2 text-sm font-rajdhani overflow-y-auto flex-1 pr-2 scrollbar-thin scrollbar-thumb-cyan-700">
+                    <!-- Strategy items populated by JS -->
+                    <div class="animate-pulse text-cyan-700 text-center mt-10">Scanning protocols...</div>
+                </div>
+            </div>
+
+            <!-- Chat Interface (Bottom Right) -->
+            <div class="hud-panel glass w-1/2 h-full flex flex-col rounded-lg border border-cyan-500/30 backdrop-blur-md bg-black/60 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+                <div class="p-3 border-b border-cyan-500/20 bg-cyan-950/20 flex justify-between items-center rounded-t-lg">
+                    <span class="font-orbitron text-sm font-bold text-cyan-300 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                        AGENT COMM LINK
+                    </span>
+                    <span class="text-[10px] text-green-500 font-mono tracking-widest border border-green-500/50 px-1 rounded bg-green-900/20">SECURE</span>
+                </div>
+                
+                <div id="chat-history" class="flex-1 overflow-y-auto p-4 space-y-3 font-rajdhani text-sm scrollbar-thin scrollbar-thumb-cyan-700 hover:scrollbar-thumb-cyan-500 scrollbar-track-transparent">
+                    <div class="text-cyan-600/50 italic text-xs text-center my-4">-- Encrypted Channel Established --</div>
+                    <div class="chat-msg system bg-cyan-900/30 p-3 rounded-r-lg rounded-bl-lg border-l-2 border-cyan-500 max-w-[90%] backdrop-blur-sm">
+                        <div class="text-xs text-cyan-400 font-bold mb-1 opacity-70">SYSTEM</div>
+                        I am online. Visual systems active. How can I assist with your portfolio today?
+                    </div>
+                </div>
+
+                <div class="p-3 border-t border-cyan-500/20 bg-cyan-950/30 rounded-b-lg">
+                    <form id="chat-form" class="flex gap-2">
+                        <input type="text" id="chat-input" 
+                            class="flex-1 bg-black/50 border border-cyan-700/50 rounded px-3 py-2 text-cyan-100 placeholder-cyan-800/50 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/50 transition-all font-rajdhani text-lg"
+                            placeholder="Command the agent..." autocomplete="off">
+                        <button type="submit" 
+                            class="bg-cyan-600/20 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-500/50 px-6 py-2 rounded transition-all font-orbitron text-xs tracking-wider hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] hover:text-white font-bold">
+                            SEND
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </footer>
+
+    </div>
+
+    <!-- Application Logic -->
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

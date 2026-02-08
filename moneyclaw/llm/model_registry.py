@@ -14,6 +14,39 @@ from moneyclaw.llm.model_profile import CostTier, ModelProfile, TaskType
 log = structlog.get_logger()
 
 
+async def _check_model_health(model: ModelProfile, timeout: float = 5.0) -> bool:
+    """检查单个模型的健康状态.
+
+    通过尝试调用模型的 is_available() 方法来验证配置是否有效。
+    """
+    from moneyclaw.llm.providers.litellm_provider import LiteLLMProvider
+    from moneyclaw.llm.providers.ollama import OllamaProvider
+
+    try:
+        if model.provider == "ollama":
+            base_url = model.metadata.get("base_url", "http://localhost:11434")
+            provider = OllamaProvider(
+                model=model.model_id.split("/")[-1],
+                base_url=base_url,
+            )
+        else:
+            provider = LiteLLMProvider(model=model.model_id)
+
+        # 使用 asyncio.wait_for 添加超时
+        is_available = await asyncio.wait_for(
+            provider.is_available(),
+            timeout=timeout,
+        )
+        return is_available
+
+    except asyncio.TimeoutError:
+        log.debug("registry.health_check_timeout", model=model.model_id)
+        return False
+    except Exception as e:
+        log.debug("registry.health_check_failed", model=model.model_id, error=str(e))
+        return False
+
+
 class SmartModelRegistry:
     """智能模型注册表.
 
@@ -37,14 +70,19 @@ class SmartModelRegistry:
         self._discovery_lock = asyncio.Lock()
         self._health_status: dict[str, bool] = {}
 
-    async def discover(self, force: bool = False) -> list[ModelProfile]:
+    async def discover(
+        self,
+        force: bool = False,
+        skip_health_check: bool = False,
+    ) -> list[ModelProfile]:
         """触发模型发现.
 
         Args:
             force: 是否强制重新发现，忽略缓存
+            skip_health_check: 是否跳过健康检查
 
         Returns:
-            发现的模型列表
+            发现的模型列表（已通过健康检查的可用模型）
         """
         async with self._discovery_lock:
             now = time.time()
@@ -53,19 +91,71 @@ class SmartModelRegistry:
                 return list(self._models.values())
 
             log.info("registry.starting_discovery")
-            models = await self._discovery.discover_all()
-            self._update_registry(models)
+            discovered_models = await self._discovery.discover_all()
+
+            # 健康检查：验证每个发现的模型是否真正可用
+            if not skip_health_check:
+                log.info("registry.health_check_start", models=len(discovered_models))
+                healthy_models = await self._health_check_models(discovered_models)
+                log.info(
+                    "registry.health_check_complete",
+                    total=len(discovered_models),
+                    healthy=len(healthy_models),
+                    unhealthy=len(discovered_models) - len(healthy_models),
+                )
+            else:
+                healthy_models = discovered_models
+
+            self._update_registry(healthy_models)
             self._last_discovery = now
 
             log.info(
                 "registry.discovery_complete",
-                total=len(models),
+                total=len(healthy_models),
                 by_provider={
                     provider: len(ids)
                     for provider, ids in self._models_by_provider.items()
                 },
             )
-            return models
+            return healthy_models
+
+    async def _health_check_models(self, models: list[ModelProfile]) -> list[ModelProfile]:
+        """对模型列表进行健康检查，返回可用的模型."""
+        if not models:
+            return []
+
+        # 并行检查所有模型的健康状态
+        check_tasks = [_check_model_health(m) for m in models]
+        results = await asyncio.gather(*check_tasks, return_exceptions=True)
+
+        healthy_models: list[ModelProfile] = []
+        for model, result in zip(models, results):
+            if isinstance(result, Exception):
+                log.warning(
+                    "registry.model_unhealthy",
+                    model=model.model_id,
+                    reason="health_check_exception",
+                    error=str(result),
+                )
+                # 标记为不可用
+                model = ModelProfile(
+                    **{**model.__dict__, "is_available": False}
+                )
+            elif result is True:
+                # 健康检查通过
+                healthy_models.append(model)
+            else:
+                log.warning(
+                    "registry.model_unhealthy",
+                    model=model.model_id,
+                    reason="health_check_failed",
+                )
+                # 标记为不可用
+                model = ModelProfile(
+                    **{**model.__dict__, "is_available": False}
+                )
+
+        return healthy_models
 
     def _update_registry(self, models: list[ModelProfile]) -> None:
         """更新注册表索引."""

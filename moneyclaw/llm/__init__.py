@@ -7,13 +7,15 @@ from moneyclaw.llm.smart_router import SmartRouter
 from moneyclaw.llm.router import LLMRouter
 
 # Types
-from moneyclaw.llm.types import LLMLayer, TaskRequest, TaskType
+from moneyclaw.llm.types import LLMLayer, TaskRequest
+from moneyclaw.llm.model_profile import TaskType
 
 # Model management
 from moneyclaw.llm.model_profile import ModelProfile, CostTier
 from moneyclaw.llm.model_registry import SmartModelRegistry
 from moneyclaw.llm.model_discovery import ModelDiscoveryService
 from moneyclaw.llm.model_intelligence import create_profile_from_model_id
+from moneyclaw.llm.providers.unified_provider import UnifiedProvider
 
 # Supporting components
 from moneyclaw.llm.task_analyzer import TaskAnalyzer, TaskAnalysis
@@ -34,6 +36,7 @@ __all__ = [
     "SmartModelRegistry",
     "ModelDiscoveryService",
     "create_profile_from_model_id",
+    "UnifiedProvider",
     # Task analysis
     "TaskAnalyzer",
     "TaskAnalysis",

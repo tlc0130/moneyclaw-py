@@ -10,15 +10,15 @@ from moneyclaw.llm.model_profile import CostTier, ModelProfile, TaskType
 # 模型能力评分映射表 — 基于模型系列和版本
 CAPABILITY_PATTERNS: list[tuple[re.Pattern, float, dict[TaskType, float]]] = [
     # Ultra-high capability models
-    (re.compile(r"gpt-4o$|gpt-4-turbo|claude-3-opus|gemini-1\.5-pro|command-r-plus"), 0.95, {
+    (re.compile(r"gpt-4o$|gpt-4-turbo|claude-3-opus|gemini-1\.5-pro|command-r-plus|moonshot/kimi-k2"), 0.95, {
         TaskType.ANALYTICS: 0.95, TaskType.EXECUTION: 0.95, TaskType.CREATIVE: 0.90, TaskType.CONVERSATION: 0.95
     }),
     # High capability models
-    (re.compile(r"gpt-4|claude-3-sonnet|gemini-1\.5-flash|llama-3\.3|llama-3\.2|llama-3\.1|qwen2\.5-72b|deepseek-chat|command-r"), 0.85, {
+    (re.compile(r"gpt-4|claude-3-sonnet|gemini-1\.5-flash|llama-3\.3|llama-3\.2|llama-3\.1|qwen2\.5-72b|deepseek-chat|command-r|moonshot/kimi-k1\.5|moonshot/kimi-k1"), 0.85, {
         TaskType.ANALYTICS: 0.90, TaskType.EXECUTION: 0.85, TaskType.CREATIVE: 0.85, TaskType.CONVERSATION: 0.90
     }),
     # Medium-high capability models
-    (re.compile(r"gpt-4o-mini|claude-3-haiku|gemini-1\.0|llama-3|qwen2\.5|mistral-large|mixtral"), 0.75, {
+    (re.compile(r"gpt-4o-mini|claude-3-haiku|gemini-1\.0|llama-3|qwen2\.5|mistral-large|mixtral|moonshot/kimi"), 0.75, {
         TaskType.ANALYTICS: 0.75, TaskType.EXECUTION: 0.80, TaskType.CREATIVE: 0.75, TaskType.CONVERSATION: 0.80
     }),
     # Standard capability models
@@ -59,15 +59,21 @@ COST_PATTERNS: list[tuple[re.Pattern, tuple[float, float]]] = [
     (re.compile(r"gemini-1\.5-pro"), (0.00125, 0.00500)),
     (re.compile(r"gemini-1\.5-flash"), (0.000075, 0.00030)),
     (re.compile(r"gemini-1\.0"), (0.00050, 0.00150)),
+    # Moonshot (月之暗面)
+    (re.compile(r"moonshot/kimi-k2"), (0.00400, 0.01600)),  # 高性能模型
+    (re.compile(r"moonshot/kimi-k1\.5"), (0.00200, 0.00800)),
+    (re.compile(r"moonshot/kimi-k1"), (0.00150, 0.00600)),
+    (re.compile(r"moonshot/kimi"), (0.00100, 0.00400)),  # 标准版
     # Ollama (free/local)
     (re.compile(r"ollama/"), (0.0, 0.0)),
 ]
 
 # 上下文长度映射
 CONTEXT_LENGTH_PATTERNS: list[tuple[re.Pattern, int]] = [
+    (re.compile(r"moonshot/kimi-k2"), 256000),  # Kimi K2 支持 256K 上下文
     (re.compile(r"gpt-4o$|claude-3-opus|gemini-1\.5-pro|command-r-plus"), 128000),
-    (re.compile(r"gpt-4-turbo|claude-3-sonnet|gemini-1\.5-flash|llama-3\.3|command-r"), 128000),
-    (re.compile(r"gpt-4|claude-3-haiku|gpt-4o-mini|gemini-1\.0"), 128000),
+    (re.compile(r"gpt-4-turbo|claude-3-sonnet|gemini-1\.5-flash|llama-3\.3|command-r|moonshot/kimi-k1"), 128000),
+    (re.compile(r"gpt-4|claude-3-haiku|gpt-4o-mini|gemini-1\.0|moonshot/kimi"), 128000),
     (re.compile(r"gpt-3\.5-turbo"), 16385),
     (re.compile(r"llama-3|qwen2\.5"), 32768),
     (re.compile(r"deepseek-chat|deepseek-coder"), 64000),
@@ -75,15 +81,15 @@ CONTEXT_LENGTH_PATTERNS: list[tuple[re.Pattern, int]] = [
 
 # 功能支持映射
 TOOL_SUPPORT_PATTERNS: list[tuple[re.Pattern, bool]] = [
-    (re.compile(r"gpt-4|gpt-3\.5-turbo|claude-3|gemini-1\.5|llama-3\.2|mistral-large|mixtral"), True),
+    (re.compile(r"gpt-4|gpt-3\.5-turbo|claude-3|gemini-1\.5|llama-3\.2|mistral-large|mixtral|moonshot/kimi"), True),
 ]
 
 VISION_SUPPORT_PATTERNS: list[tuple[re.Pattern, bool]] = [
-    (re.compile(r"gpt-4o|claude-3|gemini-1\.5|llama-3\.2-11b|llama-3\.2-90b"), True),
+    (re.compile(r"gpt-4o|claude-3|gemini-1\.5|llama-3\.2-11b|llama-3\.2-90b|moonshot/kimi-k2"), True),
 ]
 
 JSON_MODE_PATTERNS: list[tuple[re.Pattern, bool]] = [
-    (re.compile(r"gpt-4|gpt-3\.5-turbo|claude-3|gemini-1\.5|mistral"), True),
+    (re.compile(r"gpt-4|gpt-3\.5-turbo|claude-3|gemini-1\.5|mistral|moonshot/kimi"), True),
 ]
 
 
@@ -178,6 +184,8 @@ def extract_display_name(model_id: str) -> str:
         "phi": "Phi",
         "deepseek": "DeepSeek",
         "command": "Command",
+        "kimi": "Kimi",
+        "moonshot": "Moonshot",
     }
 
     words = name.split()

@@ -6,9 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -33,258 +34,15 @@ def create_app(
     app = FastAPI(title="MoneyClaw", version="0.1.0")
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
+    # --- Template Setup ---
+    _TEMPLATE_DIR = Path(__file__).parent / "templates"
+    templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
+
     @app.get("/", response_class=HTMLResponse)
-    async def index() -> str:
-        status = await brain.get_status()
-        strats = strategies.status()
-        history = await memory.get_history(limit=10)
-        pending = await memory.get_pending()
+    async def index(request: Request):
+        return templates.TemplateResponse("index.html", {"request": request})
 
-        strat_rows = ""
-        for s in strats:
-            icon = "🟢" if s["enabled"] else "⚪"
-            strat_rows += (
-                f'<tr class="border-b border-gray-700">'
-                f'<td class="py-2 px-3">{icon}</td>'
-                f'<td class="py-2 px-3">{s["name"]}</td>'
-                f'<td class="py-2 px-3">{s["risk_level"]}</td>'
-                f'<td class="py-2 px-3">{s["roi_estimate"]:.1f}x</td>'
-                f'<td class="py-2 px-3">{s["description"]}</td>'
-                f"</tr>"
-            )
-
-        history_rows = ""
-        for h in history:
-            pnl = h["profit_loss"]
-            color = "text-green-400" if pnl >= 0 else "text-red-400"
-            sign = "+" if pnl >= 0 else ""
-            ts = datetime.fromtimestamp(h["executed_at"], tz=UTC).strftime("%m-%d %H:%M")
-            dry = ""
-            if h.get("details") and h["details"].get("dry_run"):
-                dry = ' <span class="text-yellow-500 text-xs">DRY</span>'
-            history_rows += (
-                f'<tr class="border-b border-gray-700">'
-                f'<td class="py-2 px-3 text-gray-400">{ts}</td>'
-                f'<td class="py-2 px-3">{h["strategy"]}</td>'
-                f'<td class="py-2 px-3">{h["title"][:50]}</td>'
-                f'<td class="py-2 px-3 {color}">{sign}${pnl:.2f}{dry}</td>'
-                f"</tr>"
-            )
-
-        pending_rows = ""
-        for p in pending:
-            ts = datetime.fromtimestamp(p["created_at"], tz=UTC).strftime("%m-%d %H:%M")
-            pending_rows += (
-                f'<tr class="border-b border-gray-700">'
-                f'<td class="py-2 px-3 text-gray-400">{ts}</td>'
-                f'<td class="py-2 px-3">{p["strategy"]}</td>'
-                f'<td class="py-2 px-3">{p["title"][:50]}</td>'
-                f'<td class="py-2 px-3">'
-                f'<button hx-post="/api/approve/{p["id"]}" hx-swap="outerHTML" '
-                f'class="bg-green-700 px-2 py-1 rounded text-xs mr-1">Approve</button>'
-                f'<button hx-post="/api/reject/{p["id"]}" hx-swap="outerHTML" '
-                f'class="bg-red-700 px-2 py-1 rounded text-xs">Reject</button>'
-                f"</td>"
-                f"</tr>"
-            )
-
-        risk_status = status.get("risk", risk.status())
-        pnl_val = status["today_pnl"]
-        pnl_color = "text-green-400" if pnl_val >= 0 else "text-red-400"
-        pnl_sign = "+" if pnl_val >= 0 else ""
-        dry_badge = (
-            '<span class="bg-yellow-600 text-xs px-2 py-1 rounded ml-2">DRY RUN</span>'
-            if status.get("dry_run")
-            else ""
-        )
-
-        order_count = len(executor.order_history) if executor else 0
-
-        return f"""<!DOCTYPE html>
-<html>
-<head>
-<title>MoneyClaw Dashboard</title>
-<meta charset="utf-8">
-<script src="/static/htmx.min.js"></script>
-<script src="https://cdn.tailwindcss.com"></script><!-- Tailwind CDN (JIT) -->
-</head>
-<body class="bg-gray-900 text-gray-100 font-mono">
-<div class="max-w-5xl mx-auto p-6">
-
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-3xl font-bold">MoneyClaw{dry_badge}</h1>
-  <div class="text-sm text-gray-400">Tick #{status["tick_count"]}</div>
-</div>
-
-<!-- Status Cards -->
-<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"
-     hx-get="/htmx/cards" hx-trigger="every 30s" hx-swap="innerHTML">
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Status</div>
-    <div class="text-xl">{"🟢 Running" if status["running"] else "🔴 Stopped"}</div>
-  </div>
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Today P&L</div>
-    <div class="text-xl {pnl_color}">{pnl_sign}${pnl_val:.2f}</div>
-  </div>
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Strategies</div>
-    <div class="text-xl">{status["strategies_active"]} active</div>
-  </div>
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Orders</div>
-    <div class="text-xl">{order_count}</div>
-  </div>
-</div>
-
-<!-- Risk Status -->
-<div class="bg-gray-800 p-4 rounded mb-6">
-  <div class="flex items-center justify-between mb-2">
-    <div class="text-sm text-gray-400">Risk Controls</div>
-    <div class="space-x-2">
-      <button hx-post="/api/pause" hx-swap="none" class="bg-red-700 px-3 py-1 rounded text-xs">Pause</button>
-      <button hx-post="/api/resume" hx-swap="none" class="bg-green-700 px-3 py-1 rounded text-xs">Resume</button>
-    </div>
-  </div>
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-    <div>Daily loss: ${risk_status["daily_loss"]:.2f} / ${risk_status["daily_loss_limit"]:.2f}</div>
-    <div>Consec. losses: {risk_status["consecutive_losses"]} / {
-            risk_status["cooldown_threshold"]
-        }</div>
-    <div>Max position: {risk_status["max_position_ratio"]:.0%}</div>
-    <div>Paused: {"Yes" if risk_status["paused"] else "No"}</div>
-  </div>
-</div>
-
-<!-- LLM Cost -->
-<div class="bg-gray-800 p-4 rounded mb-6">
-  <div class="text-sm text-gray-400 mb-2">LLM Cost</div>
-  <pre class="text-sm">{status["llm_cost"]}</pre>
-</div>
-
-<!-- Strategies -->
-<div class="bg-gray-800 p-4 rounded mb-6">
-  <div class="text-sm text-gray-400 mb-2">Strategies</div>
-  <table class="w-full text-sm">
-    <thead><tr class="text-gray-400 border-b border-gray-600">
-      <th class="py-2 px-3 text-left w-8"></th>
-      <th class="py-2 px-3 text-left">Name</th>
-      <th class="py-2 px-3 text-left">Risk</th>
-      <th class="py-2 px-3 text-left">ROI</th>
-      <th class="py-2 px-3 text-left">Description</th>
-    </tr></thead>
-    <tbody>{
-            strat_rows
-            or '<tr><td colspan="5" class="py-4 text-center text-gray-500">No strategies loaded</td></tr>'
-        }</tbody>
-  </table>
-</div>
-
-<!-- Pending Approvals -->
-{
-            ""
-            if not pending_rows
-            else f'''
-<div class="bg-gray-800 p-4 rounded mb-6">
-  <div class="text-sm text-gray-400 mb-2">Pending Approvals ({len(pending)})</div>
-  <table class="w-full text-sm">
-    <thead><tr class="text-gray-400 border-b border-gray-600">
-      <th class="py-2 px-3 text-left">Time</th>
-      <th class="py-2 px-3 text-left">Strategy</th>
-      <th class="py-2 px-3 text-left">Title</th>
-      <th class="py-2 px-3 text-left">Action</th>
-    </tr></thead>
-    <tbody>{pending_rows}</tbody>
-  </table>
-</div>
-'''
-        }
-
-<!-- Trade History -->
-<div class="bg-gray-800 p-4 rounded mb-6"
-     hx-get="/htmx/history" hx-trigger="every 60s" hx-swap="innerHTML">
-  <div class="text-sm text-gray-400 mb-2">Recent Trades</div>
-  <table class="w-full text-sm">
-    <thead><tr class="text-gray-400 border-b border-gray-600">
-      <th class="py-2 px-3 text-left">Time</th>
-      <th class="py-2 px-3 text-left">Strategy</th>
-      <th class="py-2 px-3 text-left">Title</th>
-      <th class="py-2 px-3 text-left">P&L</th>
-    </tr></thead>
-    <tbody>{
-            history_rows
-            or '<tr><td colspan="4" class="py-4 text-center text-gray-500">No trades yet</td></tr>'
-        }</tbody>
-  </table>
-</div>
-
-<div class="text-sm text-gray-500">
-  <a href="/api/status" class="underline">API</a> |
-  <a href="/api/strategies" class="underline">Strategies</a> |
-  <a href="/api/history" class="underline">History</a> |
-  <a href="/api/orders" class="underline">Orders</a>
-</div>
-
-</div>
-</body></html>"""
-
-    # --- HTMX partials ---
-
-    @app.get("/htmx/cards", response_class=HTMLResponse)
-    async def htmx_cards() -> str:
-        status = await brain.get_status()
-        pnl_val = status["today_pnl"]
-        pnl_color = "text-green-400" if pnl_val >= 0 else "text-red-400"
-        pnl_sign = "+" if pnl_val >= 0 else ""
-        order_count = len(executor.order_history) if executor else 0
-        return f"""
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Status</div>
-    <div class="text-xl">{"🟢 Running" if status["running"] else "🔴 Stopped"}</div>
-  </div>
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Today P&L</div>
-    <div class="text-xl {pnl_color}">{pnl_sign}${pnl_val:.2f}</div>
-  </div>
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Strategies</div>
-    <div class="text-xl">{status["strategies_active"]} active</div>
-  </div>
-  <div class="bg-gray-800 p-4 rounded">
-    <div class="text-sm text-gray-400">Orders</div>
-    <div class="text-xl">{order_count}</div>
-  </div>"""
-
-    @app.get("/htmx/history", response_class=HTMLResponse)
-    async def htmx_history() -> str:
-        history = await memory.get_history(limit=10)
-        rows = ""
-        for h in history:
-            pnl = h["profit_loss"]
-            color = "text-green-400" if pnl >= 0 else "text-red-400"
-            sign = "+" if pnl >= 0 else ""
-            ts = datetime.fromtimestamp(h["executed_at"], tz=UTC).strftime("%m-%d %H:%M")
-            rows += (
-                f'<tr class="border-b border-gray-700">'
-                f'<td class="py-2 px-3 text-gray-400">{ts}</td>'
-                f'<td class="py-2 px-3">{h["strategy"]}</td>'
-                f'<td class="py-2 px-3">{h["title"][:50]}</td>'
-                f'<td class="py-2 px-3 {color}">{sign}${pnl:.2f}</td>'
-                f"</tr>"
-            )
-        return f"""
-  <div class="text-sm text-gray-400 mb-2">Recent Trades</div>
-  <table class="w-full text-sm">
-    <thead><tr class="text-gray-400 border-b border-gray-600">
-      <th class="py-2 px-3 text-left">Time</th>
-      <th class="py-2 px-3 text-left">Strategy</th>
-      <th class="py-2 px-3 text-left">Title</th>
-      <th class="py-2 px-3 text-left">P&L</th>
-    </tr></thead>
-    <tbody>{rows or '<tr><td colspan="4" class="py-4 text-center text-gray-500">No trades yet</td></tr>'}</tbody>
-  </table>"""
-
-    # --- JSON APIs ---
+    # --- API Endpoints (JSON) ---
 
     @app.get("/api/status")
     async def api_status() -> dict:
@@ -355,17 +113,40 @@ def create_app(
         return {"status": "resumed"}
 
     @app.post("/api/approve/{opp_id}")
-    async def api_approve(opp_id: str) -> HTMLResponse:
+    async def api_approve(opp_id: str) -> dict:
         ok = await memory.approve(opp_id)
-        if ok:
-            return HTMLResponse('<span class="text-green-400">Approved</span>')
-        return HTMLResponse('<span class="text-red-400">Not found</span>')
+        return {"status": "approved" if ok else "not_found"}
 
     @app.post("/api/reject/{opp_id}")
-    async def api_reject(opp_id: str) -> HTMLResponse:
+    async def api_reject(opp_id: str) -> dict:
         ok = await memory.reject(opp_id)
-        if ok:
-            return HTMLResponse('<span class="text-gray-400">Rejected</span>')
-        return HTMLResponse('<span class="text-red-400">Not found</span>')
+        return {"status": "rejected" if ok else "not_found"}
+
+    # --- Chat API ---
+    from pydantic import BaseModel
+
+    class ChatRequest(BaseModel):
+        message: str
+
+    @app.post("/api/chat")
+    async def api_chat(payload: ChatRequest) -> dict:
+        """Simple chat interface. In future, this will connect to the LLM agent."""
+        msg = payload.message.lower()
+        
+        # Simple command parsing for demo
+        if "status" in msg:
+            return {"response": f"System is currently {'RUNNING' if brain.is_running else 'STOPPED'}. P&L: ${await memory.today_pnl():.2f}"}
+        elif "list strategies" in msg:
+            names = [s.name for s in strategies.active]
+            return {"response": f"Active strategies: {', '.join(names)}"}
+        elif "risk" in msg:
+            r = risk.status()
+            return {"response": f"Risk Level: LOW. Daily Loss: ${r['daily_loss']:.2f}"}
+        
+        return {"response": f"Command received: '{payload.message}'. I am monitoring the markets."}
+
+    # --- HTMX Partials (Legacy/Fallback) ---
+    # Keeping minimal HTMX partials if needed, or removing them if fully switching to JS.
+    # For now, let's keep the API endpoints clean and assume the JS frontend uses them.
 
     return app

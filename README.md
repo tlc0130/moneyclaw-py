@@ -88,8 +88,8 @@ Each strategy has a `config.yaml` in its directory for customization.
 ### Install
 
 ```bash
-git clone https://github.com/moneyclaw/moneyclaw.git
-cd moneyclaw
+git clone https://github.com/MindDock/moneyclaw-py.git
+cd moneyclaw-py
 
 # Create virtual environment
 python -m venv .venv

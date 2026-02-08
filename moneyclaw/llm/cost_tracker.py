@@ -49,13 +49,17 @@ class CostTracker:
 
     def record(
         self,
-        layer: LLMLayer,
+        layer: LLMLayer | int,
         model: str,
         input_tokens: int,
         output_tokens: int,
         cost: float,
         latency: float,
     ) -> None:
+        # Convert int to LLMLayer if needed (SmartRouter passes int for dynamic routing)
+        if isinstance(layer, int):
+            layer = LLMLayer(layer)
+
         rec = UsageRecord(
             timestamp=time.time(),
             layer=layer,
