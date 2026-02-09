@@ -45,7 +45,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw) — an open-source 
 
 ## Preview
 
-![MoneyClaw Web Dashboard](https://github.com/user-attachments/assets/019d8015-36e6-fa8-53f1-ec467538fae78)
+![MoneyClaw Web Dashboard](./docs/images/dashboard.png)
 
 *Web dashboard showing active strategies and AI chat interface for strategy management*
 
