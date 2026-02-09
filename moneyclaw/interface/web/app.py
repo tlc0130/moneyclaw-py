@@ -147,26 +147,25 @@ def create_app(
 
     @app.post("/api/chat")
     async def api_chat(payload: ChatRequest) -> dict:
-        """Simple chat interface. In future, this will connect to the LLM agent."""
+        """AI chat interface with intelligent routing."""
         msg = payload.message.lower()
 
-        # Check if this is a strategy management message
+        # Always try AI strategy chat first if available
         if strategy_chat:
-            strategy_keywords = [
-                "策略", "创建", "生成", "优化", "启用", "禁用", "删除", "列出",
-                "strategy", "create", "generate", "optimize", "enable",
-                "disable", "delete", "list"
-            ]
-            if any(kw in msg for kw in strategy_keywords):
-                response = await strategy_chat.handle_message(payload.message)
+            response = await strategy_chat.handle_message(payload.message)
+            
+            # If AI understood the intent, return its response
+            if response.success or response.data:
                 return {
                     "response": response.message,
                     "success": response.success,
                     "data": response.data,
                     "actions": response.actions
                 }
-
-        # Simple command parsing for demo
+            
+            # If AI didn't understand, fall through to default responses
+        
+        # Fallback: Simple command parsing
         if "status" in msg:
             return {"response": f"System is currently {'RUNNING' if brain.is_running else 'STOPPED'}. P&L: ${await memory.today_pnl():.2f}"}
         elif "list strategies" in msg:
@@ -175,8 +174,10 @@ def create_app(
         elif "risk" in msg:
             r = risk.status()
             return {"response": f"Risk Level: LOW. Daily Loss: ${r['daily_loss']:.2f}"}
+        elif "help" in msg or "帮助" in msg:
+            return {"response": "我可以帮你：\n1. 创建/管理交易策略\n2. 查看系统状态\n3. 查看风险信息\n\n试试说：'创建一个定投BTC的策略' 或 '查看所有策略'"}
 
-        return {"response": f"Command received: '{payload.message}'. I am monitoring the markets."}
+        return {"response": f"我不太理解 '{payload.message}'。输入 'help' 或 '帮助' 查看支持的命令。"}
 
     # --- Strategy Management API ---
 

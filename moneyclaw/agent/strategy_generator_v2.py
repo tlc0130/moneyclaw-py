@@ -108,7 +108,7 @@ class StrategyGeneratorV2:
 
         try:
             response = await self._llm.complete(request)
-            generated_code = self._extract_code(response.content)
+            generated_code = self._extract_code(response.text)
 
             # 解析生成的代码
             strategy = self._parse_generated_code(
@@ -187,7 +187,7 @@ class StrategyGeneratorV2:
 
         try:
             response = await self._llm.complete(request)
-            optimized_code = self._extract_code(response.content)
+            optimized_code = self._extract_code(response.text)
 
             # 解析优化后的代码
             strategy = self._parse_generated_code(
@@ -575,7 +575,7 @@ class StrategyOptimizerV2:
 
         try:
             response = await self._llm.complete(request)
-            optimized_code = self._extract_code(response.content)
+            optimized_code = self._extract_code(response.text)
 
             # 保存优化后的版本
             version = self._version_manager.save_version(

@@ -1,0 +1,12 @@
+{
+  "version_id": "fe4545afb68a38f9",
+  "strategy_name": "appl_trading_strategy",
+  "created_at": "2026-02-09T10:50:07.255610",
+  "code_hash": "f91842e0774bcdb0",
+  "code_preview": "```python\n\"\"\"\nAPPL做T交易策略\n监控苹果公司(AAPL)股票，通过日内波段交易获取收益\n\"\"\"\n\nimport asyncio\nfrom datetime import datetime, timedelta\nfrom typing import Any, Dict, List, Optional\nfrom decimal import Decimal\n\nimport structlog\nimport pandas as pd\nimport numpy as np\nfrom moneyclaw.plugins.base import Opportunity, Result, Score, Strategy\n\nlog = structlog.get_logger()\n\n\nclass ApplTradingStrategy(Strategy):\n    \"\"\"APPL做T交易策略\n    \n    监控苹果公司(AAPL)股票，通过日内波段交易获取收益。\n    策略原理：\n    1. 监控AAPL的日内价格波动\n    2. 在支撑位附近买入，在阻力位附近卖出\n   ...",
+  "description": "新增一个监控APPL做T的策略",
+  "author": "ai",
+  "change_summary": "初始生成: general 类型策略",
+  "performance_snapshot": {},
+  "tags": []
+}

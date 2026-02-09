@@ -338,6 +338,23 @@ async function handleStrategyMessage(msg) {
                 pendingStrategyConfirmation = response.data.strategy;
                 addChatMessage('AI STRATEGY', '💡 Reply "yes" to confirm saving this strategy, or anything else to cancel.', 'system');
             }
+            
+            // If strategy was auto-created, refresh the list immediately
+            if (response.data && response.data.strategy_name) {
+                const refreshId = addChatMessage('SYSTEM', '🔄 Updating strategy list...', 'system', true);
+                
+                // Wait a bit for backend to finish registering
+                await new Promise(r => setTimeout(r, 500));
+                await updateStatus();
+                
+                removeChatMessage(refreshId);
+                
+                if (response.data.auto_loaded) {
+                    addChatMessage('SYSTEM', `✅ **${response.data.strategy_name}** is now active!`, 'system');
+                } else {
+                    addChatMessage('SYSTEM', `✅ **${response.data.strategy_name}** saved. Restart to activate.`, 'system');
+                }
+            }
         } else {
             addChatMessage('AI STRATEGY', response.message, 'error');
         }
@@ -389,15 +406,72 @@ function addChatMessage(sender, text, type = 'system', isTemporary = false) {
     const alignClass = isUser ? 'ml-auto border-r-2 rounded-l-lg rounded-br-lg bg-cyan-600/20 text-right' : 'mr-auto border-l-2 rounded-r-lg rounded-bl-lg bg-cyan-900/20 text-left';
     const borderClass = isUser ? 'border-cyan-400' : 'border-cyan-500';
 
+    // Parse markdown for non-user messages
+    let contentHtml;
+    if (isUser) {
+        // User messages: plain text with escape
+        contentHtml = escapeHtml(text);
+    } else {
+        // AI/System messages: parse markdown
+        contentHtml = parseMarkdown(text);
+    }
+
     const html = `
-        <div id="${id}" class="chat-msg ${type} ${alignClass} ${borderClass} p-3 max-w-[80%] backdrop-blur-sm animate-fade-in-up">
+        <div id="${id}" class="chat-msg ${type} ${alignClass} ${borderClass} p-3 max-w-[90%] backdrop-blur-sm animate-fade-in-up">
             <div class="text-[10px] text-cyan-500 font-bold mb-1 tracking-widest opacity-70">${sender}</div>
-            <div class="text-cyan-100">${text}</div>
+            <div class="chat-content text-cyan-100 prose prose-invert prose-sm max-w-none">${contentHtml}</div>
         </div>
     `;
     history.insertAdjacentHTML('beforeend', html);
-    history.scrollTop = history.scrollHeight;
+    
+    // Smooth scroll to bottom
+    scrollToBottom(history);
     return id;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function parseMarkdown(text) {
+    if (typeof marked === 'undefined') {
+        // Fallback if marked.js is not loaded
+        return escapeHtml(text).replace(/\n/g, '<br>');
+    }
+    
+    // Configure marked options
+    marked.setOptions({
+        breaks: true,        // Convert single newlines to <br>
+        gfm: true,           // GitHub Flavored Markdown
+        headerIds: false,    // Don't add ids to headers
+        mangle: false,       // Don't mangle email addresses
+        sanitize: false,     // We use DOMPurify-like approach with escapeHtml for user content
+        smartLists: true,
+        smartypants: true,
+        xhtml: false
+    });
+    
+    return marked.parse(text);
+}
+
+function scrollToBottom(element) {
+    // Use requestAnimationFrame to ensure DOM is updated
+    requestAnimationFrame(() => {
+        element.scrollTo({
+            top: element.scrollHeight,
+            behavior: 'smooth'
+        });
+    });
+    
+    // Fallback: ensure scroll happens after any images/code blocks load
+    setTimeout(() => {
+        element.scrollTo({
+            top: element.scrollHeight,
+            behavior: 'smooth'
+        });
+    }, 100);
 }
 
 function removeChatMessage(id) {
@@ -496,12 +570,6 @@ async function rollbackToVersion(strategyName, versionId) {
         console.error('Rollback failed:', e);
         alert('Rollback failed: ' + e.message);
     }
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 // Make functions available globally for onclick handlers

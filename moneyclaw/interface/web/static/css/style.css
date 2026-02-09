@@ -53,3 +53,123 @@ body {
     animation: scanline 4s linear infinite;
     pointer-events: none;
 }
+
+/* Markdown Content Styling for Chat */
+.chat-content.prose {
+    color: #22d3ee;
+}
+
+.chat-content.prose h1,
+.chat-content.prose h2,
+.chat-content.prose h3,
+.chat-content.prose h4 {
+    color: #22d3ee;
+    font-family: 'Orbitron', sans-serif;
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+}
+
+.chat-content.prose h1 { font-size: 1.25rem; }
+.chat-content.prose h2 { font-size: 1.1rem; }
+.chat-content.prose h3 { font-size: 1rem; }
+.chat-content.prose h4 { font-size: 0.9rem; }
+
+.chat-content.prose p {
+    margin-bottom: 0.5rem;
+    line-height: 1.5;
+}
+
+.chat-content.prose ul,
+.chat-content.prose ol {
+    margin-left: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.chat-content.prose li {
+    margin-bottom: 0.25rem;
+}
+
+.chat-content.prose code {
+    background: rgba(6, 182, 212, 0.15);
+    color: #67e8f9;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85em;
+    border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+.chat-content.prose pre {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(6, 182, 212, 0.2);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+
+.chat-content.prose pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #a5f3fc;
+}
+
+.chat-content.prose blockquote {
+    border-left: 3px solid #06b6d4;
+    padding-left: 0.75rem;
+    margin-left: 0;
+    margin-right: 0;
+    color: #67e8f9;
+    font-style: italic;
+    background: rgba(6, 182, 212, 0.05);
+    padding: 0.5rem 0.75rem;
+    border-radius: 0 0.25rem 0.25rem 0;
+}
+
+.chat-content.prose hr {
+    border: none;
+    border-top: 1px solid rgba(6, 182, 212, 0.2);
+    margin: 0.75rem 0;
+}
+
+.chat-content.prose strong {
+    color: #67e8f9;
+    font-weight: 700;
+}
+
+.chat-content.prose em {
+    color: #a5f3fc;
+}
+
+.chat-content.prose a {
+    color: #22d3ee;
+    text-decoration: underline;
+    text-decoration-color: rgba(6, 182, 212, 0.5);
+}
+
+.chat-content.prose a:hover {
+    color: #67e8f9;
+    text-decoration-color: #22d3ee;
+}
+
+.chat-content.prose table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+}
+
+.chat-content.prose th,
+.chat-content.prose td {
+    border: 1px solid rgba(6, 182, 212, 0.2);
+    padding: 0.375rem 0.5rem;
+    text-align: left;
+}
+
+.chat-content.prose th {
+    background: rgba(6, 182, 212, 0.1);
+    font-weight: 600;
+    color: #67e8f9;
+}

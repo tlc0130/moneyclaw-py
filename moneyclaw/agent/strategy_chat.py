@@ -251,7 +251,7 @@ class StrategyChatInterface:
             # 尝试解析JSON响应
             import json
 
-            content = response.content.strip()
+            content = response.text.strip()
             # 提取JSON部分
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
@@ -355,7 +355,7 @@ class StrategyChatInterface:
 
             import json
 
-            content = response.content.strip()
+            content = response.text.strip()
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
             elif "```" in content:
@@ -588,20 +588,52 @@ class StrategyChatInterface:
     async def _try_load_strategy(self, path: Any, name: str) -> bool:
         """尝试加载并注册新策略."""
         try:
+            import importlib.util
+            import sys
             from pathlib import Path
-            from moneyclaw.plugins.loader import StrategyLoader
 
-            loader = StrategyLoader()
-            strategies = await loader.load_from_path(Path(path).parent)
-
-            for strategy_cls in strategies:
-                if strategy_cls.name == name:
-                    strategy = strategy_cls()
-                    await self._registry.register(strategy)
-                    log.info("strategy_chat.auto_loaded", strategy=name)
-                    return True
-
-            return False
+            strategy_dir = Path(path)
+            init_file = strategy_dir / "__init__.py"
+            
+            if not init_file.exists():
+                log.warning("strategy_chat.init_file_not_found", path=str(init_file))
+                return False
+            
+            # Create unique module name to avoid conflicts
+            module_name = f"strategies.dynamic.{strategy_dir.name}_{int(__import__('time').time())}"
+            
+            log.info("strategy_chat.loading_module", module_name=module_name, path=str(init_file))
+            
+            # Load the module dynamically
+            spec = importlib.util.spec_from_file_location(module_name, init_file)
+            if spec is None or spec.loader is None:
+                log.warning("strategy_chat.spec_failed", path=str(init_file))
+                return False
+            
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+            
+            # Find Strategy subclass
+            from moneyclaw.plugins.base import Strategy
+            
+            found_strategy = None
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if isinstance(attr, type) and issubclass(attr, Strategy) and attr is not Strategy:
+                    if attr.name == name:
+                        found_strategy = attr
+                        break
+            
+            if found_strategy:
+                strategy = found_strategy()
+                await self._registry.register(strategy)
+                log.info("strategy_chat.auto_loaded", strategy=name)
+                return True
+            else:
+                log.warning("strategy_chat.strategy_class_not_found", strategy_name=name, module=module_name)
+                return False
+                
         except Exception as e:
             log.warning("strategy_chat.auto_load_failed", error=str(e))
             return False

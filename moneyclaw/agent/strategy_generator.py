@@ -141,7 +141,7 @@ class {class_name}(Strategy):
 
         try:
             response = await self._llm.complete(request)
-            generated_code = response.content
+            generated_code = response.text
 
             # 解析生成的代码
             strategy = self._parse_generated_code(
@@ -393,7 +393,7 @@ class StrategyOptimizer:
         try:
             response = await self._llm.complete(request)
             optimization = self._parse_optimization_response(
-                response.content, strategy_name, performance
+                response.text, strategy_name, performance
             )
 
             log.info(
