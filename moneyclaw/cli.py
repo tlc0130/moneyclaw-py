@@ -196,8 +196,13 @@ async def _run(web: bool, telegram: bool) -> None:
             llm=llm,
             strategies=strategies,
             risk=risk,
+            strategy_chat=strategy_chat,
         )
         tasks.append(asyncio.create_task(tg_bot.start()))
+
+    # Create strategy chat interface for AI-powered strategy management
+    from moneyclaw.agent.strategy_chat import StrategyChatInterface
+    strategy_chat = StrategyChatInterface(llm_router=llm, strategy_registry=strategies)
 
     # Start web dashboard
     if web:
@@ -206,7 +211,7 @@ async def _run(web: bool, telegram: bool) -> None:
         from moneyclaw.interface.web.app import create_app
 
         app = create_app(
-            brain=brain, memory=memory, llm=llm, strategies=strategies, risk=risk, executor=executor
+            brain=brain, memory=memory, llm=llm, strategies=strategies, risk=risk, executor=executor, strategy_chat=strategy_chat
         )
         config = uvicorn.Config(
             app, host=settings.web_host, port=settings.web_port, log_level="warning"
@@ -418,6 +423,105 @@ def resume() -> None:
         click.echo(f"Agent resumed: {resp.json()}")
     except httpx.ConnectError:
         click.echo("Could not connect — is the agent running?")
+
+
+@main.command()
+@click.argument("message", nargs=-1, required=True)
+def strategy(message: tuple[str, ...]) -> None:
+    """AI策略管理 — 使用自然语言生成、优化和管理策略.
+
+    示例:
+        moneyclaw strategy "创建一个定投比特币的策略"
+        moneyclaw strategy "优化crypto_dca策略"
+        moneyclaw strategy "列出所有策略"
+    """
+    msg = " ".join(message)
+    asyncio.run(_strategy_chat(msg))
+
+
+async def _strategy_chat(message: str) -> None:
+    """处理策略聊天命令."""
+    from moneyclaw.agent.strategy_chat import StrategyChatInterface
+    from moneyclaw.config.settings import Settings
+    from moneyclaw.llm.budget_manager import BudgetManager, BudgetPolicy
+    from moneyclaw.llm.cache import ResponseCache
+    from moneyclaw.llm.cost_tracker import CostTracker
+    from moneyclaw.llm.model_discovery import ModelDiscoveryService
+    from moneyclaw.llm.model_registry import SmartModelRegistry
+    from moneyclaw.llm.performance_tracker import PerformanceTracker
+    from moneyclaw.llm.smart_router import SmartRouter
+    from moneyclaw.plugins.registry import StrategyRegistry
+
+    settings = Settings()
+
+    # 初始化LLM组件
+    api_keys = {
+        "OPENAI_API_KEY": settings.llm.openai_api_key,
+        "ANTHROPIC_API_KEY": settings.llm.anthropic_api_key,
+        "DEEPSEEK_API_KEY": settings.llm.deepseek_api_key,
+        "GROQ_API_KEY": settings.llm.groq_api_key,
+        "GOOGLE_API_KEY": settings.llm.google_api_key,
+        "MOONSHOT_API_KEY": settings.llm.moonshot_api_key,
+    }
+    discovery = ModelDiscoveryService(
+        timeout=settings.llm.llm_discovery_timeout,
+        api_keys={k: v for k, v in api_keys.items() if v},
+    )
+    registry = SmartModelRegistry(discovery_service=discovery)
+    cost_tracker = CostTracker(daily_budget=settings.llm.daily_llm_budget)
+    budget_policy = BudgetPolicy(
+        daily_budget=settings.llm.daily_llm_budget,
+        caution_threshold=settings.llm.budget_caution_threshold,
+        critical_threshold=settings.llm.budget_critical_threshold,
+        enable_auto_downgrade=settings.llm.enable_auto_downgrade,
+        reserve_for_urgent=settings.llm.reserve_budget_for_urgent,
+    )
+    budget_manager = BudgetManager(cost_tracker=cost_tracker, policy=budget_policy)
+    performance_tracker = PerformanceTracker()
+
+    llm = SmartRouter(
+        registry=registry,
+        cost_tracker=cost_tracker,
+        budget_manager=budget_manager,
+        performance_tracker=performance_tracker,
+        cache=ResponseCache(),
+    )
+
+    # 初始化策略注册表
+    strategy_registry = StrategyRegistry()
+
+    click.echo("🤖 初始化AI策略管理系统...")
+    await llm.initialize()
+
+    # 创建策略聊天接口
+    strategy_chat = StrategyChatInterface(
+        llm_router=llm,
+        strategy_registry=strategy_registry,
+    )
+
+    # 处理消息
+    click.echo(f"👤 用户: {message}")
+    click.echo()
+
+    response = await strategy_chat.handle_message(message)
+
+    # 显示响应
+    if response.success:
+        click.echo(f"🤖 AI: {response.message}")
+
+        # 检查是否需要确认保存
+        if response.data and response.data.get("pending_confirm"):
+            strategy = response.data.get("strategy")
+            if strategy:
+                click.echo()
+                confirm = click.confirm("是否保存此策略?", default=False)
+                if confirm:
+                    save_response = await strategy_chat.confirm_save_strategy(strategy)
+                    click.echo(f"🤖 AI: {save_response.message}")
+                else:
+                    click.echo("❎ 已取消保存策略。")
+    else:
+        click.echo(f"⚠️  {response.message}")
 
 
 if __name__ == "__main__":

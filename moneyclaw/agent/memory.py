@@ -186,3 +186,61 @@ class Memory:
                 }
                 for r in rows
             ]
+
+    async def get_strategy_history(self, strategy_name: str, limit: int = 50) -> list[dict]:
+        """Get execution history for a specific strategy."""
+        assert self._db
+        async with self._db.execute(
+            "SELECT r.executed_at, o.title, r.profit_loss, r.details "
+            "FROM results r JOIN opportunities o ON r.opportunity_id = o.id "
+            "WHERE o.strategy = ? "
+            "ORDER BY r.executed_at DESC LIMIT ?",
+            (strategy_name, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "executed_at": r[0],
+                    "title": r[1],
+                    "profit_loss": r[2],
+                    "details": json.loads(r[3]) if r[3] else None,
+                }
+                for r in rows
+            ]
+
+    async def get_strategy_stats(self, strategy_name: str) -> dict:
+        """Get execution statistics for a specific strategy."""
+        assert self._db
+        # Get total executions and success rate
+        async with self._db.execute(
+            "SELECT COUNT(*), AVG(r.profit_loss), SUM(CASE WHEN r.profit_loss > 0 THEN 1 ELSE 0 END) "
+            "FROM results r JOIN opportunities o ON r.opportunity_id = o.id "
+            "WHERE o.strategy = ?",
+            (strategy_name,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            total = row[0] if row else 0
+            avg_pnl = row[1] if row and row[1] else 0.0
+            profitable = row[2] if row else 0
+
+        # Get last 24h stats
+        from datetime import datetime, timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).timestamp()
+        async with self._db.execute(
+            "SELECT COUNT(*), SUM(r.profit_loss) "
+            "FROM results r JOIN opportunities o ON r.opportunity_id = o.id "
+            "WHERE o.strategy = ? AND r.executed_at > ?",
+            (strategy_name, yesterday),
+        ) as cursor:
+            row = await cursor.fetchone()
+            recent_count = row[0] if row else 0
+            recent_pnl = row[1] if row and row[1] else 0.0
+
+        return {
+            "total_executions": total,
+            "profitable_trades": profitable,
+            "success_rate": (profitable / total * 100) if total > 0 else 0.0,
+            "avg_pnl": avg_pnl,
+            "recent_executions": recent_count,
+            "recent_pnl": recent_pnl,
+        }

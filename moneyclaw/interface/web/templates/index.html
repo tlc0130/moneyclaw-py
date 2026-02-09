@@ -63,6 +63,11 @@
 
             <!-- Stats HUD -->
             <div class="flex gap-4">
+                <div class="hud-stat glass p-3 rounded border border-cyan-500/20 w-36 bg-black/60 backdrop-blur-sm">
+                    <div class="text-[10px] text-cyan-500 uppercase tracking-widest mb-1">Wallet Value</div>
+                    <div id="stat-wallet" class="text-2xl font-bold font-orbitron text-cyan-300">$0.00</div>
+                    <div id="stat-wallet-label" class="text-[9px] text-cyan-700">Not connected</div>
+                </div>
                 <div class="hud-stat glass p-3 rounded border border-cyan-500/20 w-32 bg-black/60 backdrop-blur-sm">
                     <div class="text-[10px] text-cyan-500 uppercase tracking-widest mb-1">P&L Today</div>
                     <div id="stat-pnl" class="text-2xl font-bold font-orbitron text-white">$0.00</div>
@@ -82,23 +87,25 @@
             </div>
         </main>
 
-        <!-- Bottom HUD -->
-        <footer class="flex justify-between items-end gap-6 pointer-events-auto h-1/3 w-full">
-            
-            <!-- Strategy Panel (Bottom Left) -->
-            <div class="hud-panel glass w-1/3 h-full flex flex-col p-4 rounded-lg border border-cyan-500/30 backdrop-blur-md bg-black/60 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+        <!-- Strategy Panel (Bottom Left - Fixed Position) -->
+        <div class="fixed bottom-6 left-6 z-20 pointer-events-auto w-[450px] h-[45vh] min-h-[350px]">
+            <div class="hud-panel glass w-full h-full flex flex-col p-4 rounded-lg border border-cyan-500/30 backdrop-blur-md bg-black/60 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
                 <h2 class="text-lg font-bold font-orbitron mb-3 flex items-center gap-2 text-cyan-300 border-b border-cyan-500/30 pb-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 01-2 2h2a2 2 0 012-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                     ACTIVE STRATEGIES
+                    <span class="text-[10px] text-cyan-600 font-normal ml-2">(点击查看详情)</span>
                 </h2>
                 <div id="strategy-list" class="space-y-2 text-sm font-rajdhani overflow-y-auto flex-1 pr-2 scrollbar-thin scrollbar-thumb-cyan-700">
                     <!-- Strategy items populated by JS -->
                     <div class="animate-pulse text-cyan-700 text-center mt-10">Scanning protocols...</div>
                 </div>
             </div>
+        </div>
 
+        <!-- Bottom HUD (Chat Only) -->
+        <footer class="flex justify-end items-end gap-6 pointer-events-auto h-1/3 w-full">
             <!-- Chat Interface (Bottom Right) -->
-            <div class="hud-panel glass w-1/2 h-full flex flex-col rounded-lg border border-cyan-500/30 backdrop-blur-md bg-black/60 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+            <div class="hud-panel glass w-[calc(50%-1rem)] h-full flex flex-col rounded-lg border border-cyan-500/30 backdrop-blur-md bg-black/60 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
                 <div class="p-3 border-b border-cyan-500/20 bg-cyan-950/20 flex justify-between items-center rounded-t-lg">
                     <span class="font-orbitron text-sm font-bold text-cyan-300 flex items-center gap-2">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
@@ -129,6 +136,107 @@
             </div>
         </footer>
 
+    </div>
+
+    <!-- Strategy Detail Modal -->
+    <div id="strategy-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div class="hud-panel glass w-[600px] max-h-[80vh] flex flex-col rounded-lg border border-cyan-500/50 backdrop-blur-md bg-black/80 shadow-[0_0_40px_rgba(6,182,212,0.3)]">
+            <!-- Modal Header -->
+            <div class="flex justify-between items-center p-4 border-b border-cyan-500/30">
+                <h3 id="modal-title" class="text-xl font-bold font-orbitron text-cyan-300">Strategy Details</h3>
+                <button id="close-modal" class="text-cyan-600 hover:text-cyan-300 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <!-- Modal Content -->
+            <div class="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-cyan-700">
+                <!-- Status Section -->
+                <div class="mb-4 p-3 bg-cyan-900/20 rounded border border-cyan-500/20">
+                    <div class="flex items-center gap-3 mb-2">
+                        <span id="modal-status" class="px-2 py-1 text-xs font-mono rounded bg-green-500/20 text-green-400">ACTIVE</span>
+                        <span id="modal-risk" class="text-xs text-cyan-600">RISK: LOW</span>
+                    </div>
+                    <p id="modal-description" class="text-sm text-cyan-300/80">Strategy description...</p>
+                </div>
+                
+                <!-- Metrics Grid -->
+                <div class="grid grid-cols-4 gap-3 mb-4">
+                    <div class="p-3 bg-cyan-950/30 rounded border border-cyan-500/10 text-center">
+                        <div class="text-[10px] text-cyan-600 uppercase">ROI Estimate</div>
+                        <div id="modal-roi" class="text-lg font-bold font-orbitron text-green-400">+12.5%</div>
+                    </div>
+                    <div class="p-3 bg-cyan-950/30 rounded border border-cyan-500/10 text-center">
+                        <div class="text-[10px] text-cyan-600 uppercase">Total Trades</div>
+                        <div id="modal-executions" class="text-lg font-bold font-orbitron text-cyan-300">24</div>
+                    </div>
+                    <div class="p-3 bg-cyan-950/30 rounded border border-cyan-500/10 text-center">
+                        <div class="text-[10px] text-cyan-600 uppercase">Win Rate</div>
+                        <div id="modal-success-rate" class="text-lg font-bold font-orbitron text-cyan-300">87%</div>
+                    </div>
+                    <div class="p-3 bg-cyan-950/30 rounded border border-cyan-500/10 text-center">
+                        <div class="text-[10px] text-cyan-600 uppercase">Avg P&L</div>
+                        <div id="modal-avg-pnl" class="text-lg font-bold font-orbitron text-cyan-300">$0</div>
+                    </div>
+                </div>
+
+                <!-- 24h Stats -->
+                <div class="mb-4 p-3 bg-cyan-900/10 rounded border border-cyan-500/10">
+                    <div class="text-[10px] text-cyan-600 uppercase mb-2">Last 24 Hours</div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs text-cyan-400">Trades:</span>
+                            <span id="modal-recent-count" class="text-sm font-mono text-cyan-300">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs text-cyan-400">P&L:</span>
+                            <span id="modal-recent-pnl" class="text-sm font-mono text-cyan-300">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Execution History -->
+                <div class="mb-4">
+                    <h4 class="text-sm font-bold font-orbitron text-cyan-400 mb-2 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        EXECUTION HISTORY
+                    </h4>
+                    <div id="modal-history" class="space-y-2">
+                        <!-- History items will be populated by JS -->
+                    </div>
+                </div>
+                
+                <!-- Version History -->
+                <div class="mb-4">
+                    <h4 class="text-sm font-bold font-orbitron text-cyan-400 mb-2 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        VERSION HISTORY
+                        <span class="text-[10px] text-cyan-600 font-normal">(AI生成策略自动保存版本)</span>
+                    </h4>
+                    <div id="version-history" class="space-y-2 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-700">
+                        <div class="text-center text-cyan-700 text-xs py-4">Loading version history...</div>
+                    </div>
+                </div>
+
+                <!-- Performance Chart Placeholder -->
+                <div class="mb-4">
+                    <h4 class="text-sm font-bold font-orbitron text-cyan-400 mb-2">PERFORMANCE</h4>
+                    <div class="h-32 bg-cyan-950/20 rounded border border-cyan-500/10 flex items-center justify-center">
+                        <span class="text-xs text-cyan-700">Performance chart coming soon...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Modal Footer -->
+            <div class="flex justify-end gap-3 p-4 border-t border-cyan-500/30">
+                <button id="modal-toggle" class="px-4 py-2 text-sm font-orbitron border border-cyan-500/50 rounded hover:bg-cyan-500/20 transition-colors">
+                    DISABLE
+                </button>
+                <button id="close-modal-btn" class="px-4 py-2 text-sm font-orbitron bg-cyan-600/20 border border-cyan-500/50 rounded hover:bg-cyan-500/40 transition-colors">
+                    CLOSE
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Application Logic -->

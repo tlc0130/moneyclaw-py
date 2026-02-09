@@ -20,10 +20,11 @@ class CostTier(Enum):
 class TaskType(Enum):
     """任务类型 — 用于匹配模型专长."""
 
-    ANALYTICS = auto()   # 分析类：数据分析、逻辑推理、数学
-    EXECUTION = auto()   # 执行类：代码生成、指令遵循、结构化输出
-    CREATIVE = auto()    # 创意类：写作、头脑风暴、内容生成
-    CONVERSATION = auto()  # 对话类：聊天、问答
+    ANALYTICS = auto()      # 分析类：数据分析、逻辑推理、数学
+    EXECUTION = auto()      # 执行类：代码生成、指令遵循、结构化输出
+    CREATIVE = auto()       # 创意类：写作、头脑风暴、内容生成
+    CONVERSATION = auto()   # 对话类：聊天、问答
+    CODE_GENERATION = auto()  # 代码生成：专门的策略/代码编写任务
 
 
 @dataclass(frozen=True)

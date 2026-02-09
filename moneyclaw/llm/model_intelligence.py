@@ -11,23 +11,28 @@ from moneyclaw.llm.model_profile import CostTier, ModelProfile, TaskType
 CAPABILITY_PATTERNS: list[tuple[re.Pattern, float, dict[TaskType, float]]] = [
     # Ultra-high capability models
     (re.compile(r"gpt-4o$|gpt-4-turbo|claude-3-opus|gemini-1\.5-pro|command-r-plus|moonshot/kimi-k2"), 0.95, {
-        TaskType.ANALYTICS: 0.95, TaskType.EXECUTION: 0.95, TaskType.CREATIVE: 0.90, TaskType.CONVERSATION: 0.95
+        TaskType.ANALYTICS: 0.95, TaskType.EXECUTION: 0.95, TaskType.CREATIVE: 0.90, TaskType.CONVERSATION: 0.95,
+        TaskType.CODE_GENERATION: 0.90
     }),
     # High capability models
     (re.compile(r"gpt-4|claude-3-sonnet|gemini-1\.5-flash|llama-3\.3|llama-3\.2|llama-3\.1|qwen2\.5-72b|deepseek-chat|command-r|moonshot/kimi-k1\.5|moonshot/kimi-k1"), 0.85, {
-        TaskType.ANALYTICS: 0.90, TaskType.EXECUTION: 0.85, TaskType.CREATIVE: 0.85, TaskType.CONVERSATION: 0.90
+        TaskType.ANALYTICS: 0.90, TaskType.EXECUTION: 0.85, TaskType.CREATIVE: 0.85, TaskType.CONVERSATION: 0.90,
+        TaskType.CODE_GENERATION: 0.85
     }),
     # Medium-high capability models
     (re.compile(r"gpt-4o-mini|claude-3-haiku|gemini-1\.0|llama-3|qwen2\.5|mistral-large|mixtral|moonshot/kimi"), 0.75, {
-        TaskType.ANALYTICS: 0.75, TaskType.EXECUTION: 0.80, TaskType.CREATIVE: 0.75, TaskType.CONVERSATION: 0.80
+        TaskType.ANALYTICS: 0.75, TaskType.EXECUTION: 0.80, TaskType.CREATIVE: 0.75, TaskType.CONVERSATION: 0.80,
+        TaskType.CODE_GENERATION: 0.75
     }),
     # Standard capability models
     (re.compile(r"gpt-3\.5|claude-instant|gemini-pro|phi-4|phi-3|mistral-medium|codellama"), 0.65, {
-        TaskType.ANALYTICS: 0.65, TaskType.EXECUTION: 0.70, TaskType.CREATIVE: 0.65, TaskType.CONVERSATION: 0.70
+        TaskType.ANALYTICS: 0.65, TaskType.EXECUTION: 0.70, TaskType.CREATIVE: 0.65, TaskType.CONVERSATION: 0.70,
+        TaskType.CODE_GENERATION: 0.70
     }),
     # Lower capability models (but still useful for simple tasks)
     (re.compile(r"llama-2|mistral|qwen2|phi"), 0.55, {
-        TaskType.ANALYTICS: 0.55, TaskType.EXECUTION: 0.60, TaskType.CREATIVE: 0.55, TaskType.CONVERSATION: 0.60
+        TaskType.ANALYTICS: 0.55, TaskType.EXECUTION: 0.60, TaskType.CREATIVE: 0.55, TaskType.CONVERSATION: 0.60,
+        TaskType.CODE_GENERATION: 0.55
     }),
 ]
 
@@ -35,7 +40,8 @@ CAPABILITY_PATTERNS: list[tuple[re.Pattern, float, dict[TaskType, float]]] = [
 DEFAULT_CAPABILITY = 0.50
 DEFAULT_TASK_STRENGTHS: dict[TaskType, float] = {
     TaskType.ANALYTICS: 0.50, TaskType.EXECUTION: 0.50,
-    TaskType.CREATIVE: 0.50, TaskType.CONVERSATION: 0.50
+    TaskType.CREATIVE: 0.50, TaskType.CONVERSATION: 0.50,
+    TaskType.CODE_GENERATION: 0.50
 }
 
 # 模型成本映射表 (USD per 1K tokens) — 输入:输出

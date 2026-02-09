@@ -184,11 +184,22 @@ class AgentBrain:
     async def get_status(self) -> dict:
         """Current agent status for reporting."""
         today_pnl = await self._memory.today_pnl()
+
+        # Get wallet balance if executor is available
+        wallet_value = 0.0
+        if self._executor and not self._risk.is_dry_run:
+            try:
+                for exchange_id in self._executor.exchange_manager.connected:
+                    wallet_value += await self._executor.exchange_manager.get_total_value(exchange_id)
+            except Exception:
+                pass  # Fail silently, wallet value is optional
+
         return {
             "running": self._running,
             "strategies_active": len(self._strategies.active),
             "strategies": self._strategies.status(),
             "today_pnl": today_pnl,
+            "wallet_value": wallet_value,
             "llm_cost": self._llm.cost_tracker.format_status(),
             "pending_approvals": await self._memory.pending_count(),
             "risk": self._risk.status(),

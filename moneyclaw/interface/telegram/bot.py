@@ -12,6 +12,7 @@ from aiogram.types import Message
 if TYPE_CHECKING:
     from moneyclaw.agent.brain import AgentBrain
     from moneyclaw.agent.memory import Memory
+    from moneyclaw.agent.strategy_chat import StrategyChatInterface
     from moneyclaw.execution.risk import RiskManager
     from moneyclaw.llm.router import LLMRouter
     from moneyclaw.plugins.registry import StrategyRegistry
@@ -31,6 +32,7 @@ class TelegramBot:
         llm: LLMRouter,
         strategies: StrategyRegistry,
         risk: RiskManager,
+        strategy_chat: StrategyChatInterface | None = None,
     ) -> None:
         self._bot = Bot(token=token)
         self._dp = Dispatcher()
@@ -40,6 +42,8 @@ class TelegramBot:
         self._llm = llm
         self._strategies = strategies
         self._risk = risk
+        self._strategy_chat = strategy_chat
+        self._pending_strategy_confirmations: dict[str, Any] = {}
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -151,12 +155,112 @@ class TelegramBot:
             )
             await message.answer(response.text[:4000])  # Telegram message limit
 
+        @dp.message(Command("strategy"))
+        async def cmd_strategy(message: Message) -> None:
+            """AI策略管理命令."""
+            if not self._strategy_chat:
+                await message.answer(
+                    "AI策略管理功能未启用。请确保系统已正确配置。"
+                )
+                return
+
+            args = (message.text or "").split(maxsplit=1)
+            if len(args) < 2:
+                await message.answer(
+                    "🤖 **AI策略管理系统**\n\n"
+                    "使用自然语言管理策略:\n"
+                    "• `/strategy 创建一个定投BTC的策略`\n"
+                    "• `/strategy 优化crypto_dca`\n"
+                    "• `/strategy 列出所有策略`\n"
+                    "• `/strategy 禁用crypto_funding`\n\n"
+                    "或直接发送策略相关消息。"
+                )
+                return
+
+            user_message = args[1]
+            await self._handle_strategy_message(message, user_message)
+
         @dp.message(F.text)
         async def fallback(message: Message) -> None:
+            # 先检查是否有待确认的策略保存
+            if await self._handle_strategy_confirmation(message):
+                return
+
+            # 检查是否是策略相关消息
+            if self._strategy_chat and message.text:
+                text = message.text.strip()
+                # 策略相关关键词
+                strategy_keywords = [
+                    "策略", "创建", "生成", "优化", "启用", "禁用", "删除",
+                    "strategy", "create", "generate", "optimize", "enable",
+                    "disable", "delete", "list", "列出"
+                ]
+                if any(kw in text.lower() for kw in strategy_keywords):
+                    await self._handle_strategy_message(message, text)
+                    return
+
             await message.answer(
                 "I don't understand that command."
-                " Try /status, /strategies, /cost, or /ask <question>."
+                " Try /status, /strategies, /cost, /ask <question>, or /strategy <command>."
             )
+
+    async def _handle_strategy_message(self, message: Message, text: str) -> None:
+        """处理策略相关的自然语言消息."""
+        if not self._strategy_chat:
+            return
+
+        import structlog
+        log = structlog.get_logger()
+        log.info("telegram.strategy_command", text=text[:50])
+
+        try:
+            response = await self._strategy_chat.handle_message(text)
+
+            # 检查是否需要确认保存策略
+            if response.data and response.data.get("pending_confirm"):
+                strategy = response.data.get("strategy")
+                if strategy:
+                    # 存储待确认的策略
+                    self._pending_strategy_confirmations[str(message.from_user.id)] = strategy
+
+                    # 添加确认按钮提示
+                    response_msg = response.message + "\n\n💡 回复 '是' 或 'yes' 确认保存，回复其他内容取消。"
+                    await message.answer(response_msg[:4000])
+                    return
+
+            await message.answer(response.message[:4000])
+
+        except Exception as e:
+            log.exception("telegram.strategy_error")
+            await message.answer(f"处理策略命令时出错: {e}")
+
+    async def _handle_strategy_confirmation(self, message: Message) -> bool:
+        """处理策略保存确认. 返回是否处理了确认."""
+        user_id = str(message.from_user.id)
+        text = message.text or ""
+
+        # 检查是否有待确认的策略
+        if user_id not in self._pending_strategy_confirmations:
+            return False
+
+        # 检查确认回复
+        if text.strip().lower() in ("是", "yes", "确认", "保存", "ok", "y"):
+            strategy = self._pending_strategy_confirmations.pop(user_id)
+            try:
+                from moneyclaw.agent.strategy_generator import GeneratedStrategy
+
+                if isinstance(strategy, GeneratedStrategy):
+                    path = await self._strategy_chat.confirm_save_strategy(strategy)
+                    await message.answer(f"✅ 策略已保存！\n路径: {path.message}")
+                return True
+            except Exception as e:
+                await message.answer(f"❌ 保存策略失败: {e}")
+                return True
+        else:
+            # 用户取消
+            self._pending_strategy_confirmations.pop(user_id, None)
+            await message.answer("❎ 已取消保存策略。")
+            return True
 
     @property
     def bot(self) -> Bot:

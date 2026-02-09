@@ -2,7 +2,7 @@
 
 7x24 AI Agent that saves and makes money autonomously.
 
-Inspired by [OpenClaw](https://github.com/nicepkg/openclaw) — an open-source multi-channel AI assistant. MoneyClaw takes the autonomous agent concept in a different direction: instead of being a general-purpose chat assistant, it focuses entirely on **financial optimization** — scanning for opportunities, executing strategies, and minimizing its own operating costs.
+Inspired by [OpenClaw](https://github.com/openclaw/openclaw) — an open-source multi-channel AI assistant. MoneyClaw takes the autonomous agent concept in a different direction: instead of being a general-purpose chat assistant, it focuses entirely on **financial optimization** — scanning for opportunities, executing strategies, and minimizing its own operating costs.
 
 ## Architecture
 

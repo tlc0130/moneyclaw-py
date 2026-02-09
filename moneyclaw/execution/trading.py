@@ -56,6 +56,29 @@ class ExchangeManager:
         ex = self.get(exchange_id)
         return await ex.fetch_balance()  # type: ignore[union-attr]
 
+    async def get_total_value(self, exchange_id: str) -> float:
+        """Calculate total portfolio value in USD."""
+        try:
+            balance = await self.get_balance(exchange_id)
+            total = balance.get("total", {})
+            # Sum up all non-zero balances
+            # In real implementation, we'd convert each to USD using current prices
+            usd_value = total.get("USDT", 0) + total.get("USD", 0) + total.get("BUSD", 0)
+
+            # For crypto assets, we'd need price conversion
+            # For now, return a simplified calculation
+            total_value = usd_value
+            for asset, amount in total.items():
+                if asset not in ["USDT", "USD", "BUSD"] and amount > 0:
+                    # In dry_run mode, use placeholder values
+                    # In live mode, fetch prices and calculate
+                    total_value += amount * 0  # Would multiply by price
+
+            return total_value
+        except Exception as e:
+            log.warning("exchange.balance_error", exchange=exchange_id, error=str(e))
+            return 0.0
+
     @property
     def connected(self) -> list[str]:
         return list(self._exchanges)
@@ -80,6 +103,10 @@ class TradeExecutor:
     @property
     def dry_run(self) -> bool:
         return self._dry_run
+
+    @property
+    def exchange_manager(self) -> ExchangeManager:
+        return self._em
 
     def _next_id(self) -> str:
         self._order_counter += 1

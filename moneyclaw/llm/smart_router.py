@@ -320,7 +320,41 @@ class SmartRouter:
 
             candidates.append(provider)
 
+        # 代码生成任务：优先选择 Gemini 等代码生成能力强的模型
+        if task_type == TaskType.CODE_GENERATION and candidates:
+            candidates = self._prioritize_for_code_generation(candidates)
+
         return candidates
+
+    def _prioritize_for_code_generation(
+        self, candidates: list[UnifiedProvider]
+    ) -> list[UnifiedProvider]:
+        """为代码生成任务优先排序候选模型.
+        
+        优先顺序：
+        1. Gemini 系列（代码生成能力最强）
+        2. Claude 系列
+        3. GPT-4 系列
+        4. 其他
+        """
+        def code_gen_priority(provider: UnifiedProvider) -> int:
+            model_id = provider.model_id.lower()
+            # Gemini 优先
+            if "gemini" in model_id:
+                return 0
+            # Claude 其次
+            if "claude" in model_id:
+                return 1
+            # GPT-4 再次
+            if "gpt-4" in model_id:
+                return 2
+            # DeepSeek Coder
+            if "deepseek-coder" in model_id or "deepseek-chat" in model_id:
+                return 3
+            # 其他
+            return 4
+
+        return sorted(candidates, key=code_gen_priority)
 
     def _score_model(
         self,
@@ -337,11 +371,17 @@ class SmartRouter:
         - 成本效率 (20%)
         - 历史表现 (15%)
         - 响应速度 (10%)
+        
+        代码生成任务有特殊权重调整。
         """
         model = provider.model_profile
 
         # 1. 任务匹配度
         task_score = model.task_strengths.get(task_type, model.capability_score * 0.7)
+        # 代码生成任务：大幅提高任务匹配度权重
+        if task_type == TaskType.CODE_GENERATION:
+            code_gen_score = model.task_strengths.get(TaskType.CODE_GENERATION, model.capability_score * 0.8)
+            task_score = max(task_score, code_gen_score)
 
         # 2. 能力适配度
         capability_score = model.capability_score
@@ -365,8 +405,13 @@ class SmartRouter:
         # 5. 响应速度
         speed_score = 1.0 / (1.0 + model.avg_latency_ms / 1000)
 
-        # 加权总分
-        weights = (0.30, 0.25, 0.20, 0.15, 0.10)
+        # 加权总分 - 代码生成任务调整权重
+        if task_type == TaskType.CODE_GENERATION:
+            # 代码生成更重视任务匹配度和能力
+            weights = (0.45, 0.30, 0.10, 0.10, 0.05)
+        else:
+            weights = (0.30, 0.25, 0.20, 0.15, 0.10)
+        
         total_score = (
             task_score * weights[0] +
             capability_score * weights[1] +
