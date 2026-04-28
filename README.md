@@ -147,6 +147,25 @@ moneyclaw resume       # Resume agent
 moneyclaw version      # Show version
 ```
 
+> **Windows/PowerShell note:** if `moneyclaw` is not recognized, the console entrypoint is not on your `PATH` yet.
+> Reinstall in the active virtual environment:
+>
+> ```powershell
+> python -m pip install -e ".[dev]"
+> ```
+>
+> Then either run:
+>
+> ```powershell
+> moneyclaw run
+> ```
+>
+> Or run the module directly (works even if the script shim is missing):
+>
+> ```powershell
+> python -m moneyclaw run
+> ```
+
 The web dashboard is available at `http://localhost:8080` by default.
 
 ### Testing
