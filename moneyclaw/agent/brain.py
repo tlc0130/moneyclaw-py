@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from moneyclaw.data.feeds.crypto import CryptoFeed
+
 import structlog
 
 if TYPE_CHECKING:
@@ -50,6 +52,7 @@ class AgentBrain:
         self._executor = executor
         self._running = False
         self._tick_count = 0
+        self._paper_prices = CryptoFeed()
 
     async def start(self) -> None:
         """Start the agent's main loop."""
@@ -142,6 +145,9 @@ class AgentBrain:
             result = await strategy.execute(opp)
             await self._memory.record_result(opp, result)
 
+            if self._risk.is_dry_run:
+                await self._update_paper_portfolio(opp, result)
+
             # LEARN — record outcome for risk tracking
             self._risk.record_outcome(result.profit_loss, strategy_name=opp.strategy_name)
 
@@ -149,10 +155,25 @@ class AgentBrain:
                 "agent.executed",
                 strategy=opp.strategy_name,
                 profit=result.profit_loss,
+                success=result.success,
+                status=result.details.get("status") if isinstance(result.details, dict) else None,
                 dry_run=self._risk.is_dry_run,
             )
             if self._notifier:
-                await self._notifier.trade_executed(opp, result)
+                if result.success:
+                    await self._notifier.trade_executed(opp, result)
+                else:
+                    # Don't dress up a failed/blocked order as a completed trade —
+                    # that masked the ccxt execution bug for a long time.
+                    reason = (
+                        result.details.get("error")
+                        or result.details.get("status")
+                        or "execution failed"
+                    ) if isinstance(result.details, dict) else "execution failed"
+                    await self._notifier.alert(
+                        "Trade NOT executed",
+                        f"{opp.strategy_name}: {opp.title}\nReason: {reason}",
+                    )
 
         except Exception:
             log.exception("agent.execute_error", opportunity=opp.id)
@@ -181,6 +202,33 @@ class AgentBrain:
     def tick_count(self) -> int:
         return self._tick_count
 
+    async def _update_paper_portfolio(self, opp, result) -> None:
+        if opp.strategy_name != "crypto_dca":
+            return
+
+        coin = opp.data.get("coin")
+        amount_usd = float(opp.data.get("amount_usd", 0) or 0)
+        if not coin or amount_usd <= 0:
+            return
+
+        quote = await self._paper_prices.get_price(str(coin))
+        if not quote or quote.price <= 0:
+            return
+
+        quantity = amount_usd / quote.price
+        symbol = str(coin).upper()
+        await self._memory.paper_buy(
+            symbol=symbol,
+            quantity=quantity,
+            price=quote.price,
+            details={
+                "strategy": opp.strategy_name,
+                "order_id": result.details.get("order_id") if isinstance(result.details, dict) else None,
+                "dry_run": True,
+            },
+        )
+        await self._memory.paper_mark_price(symbol, quote.price)
+
     async def get_status(self) -> dict:
         """Current agent status for reporting."""
         today_pnl = await self._memory.today_pnl()
@@ -194,6 +242,8 @@ class AgentBrain:
             except Exception:
                 pass  # Fail silently, wallet value is optional
 
+        paper_portfolio = await self._memory.get_paper_portfolio() if self._risk.is_dry_run else None
+
         return {
             "running": self._running,
             "strategies_active": len(self._strategies.active),
@@ -205,4 +255,5 @@ class AgentBrain:
             "risk": self._risk.status(),
             "tick_count": self._tick_count,
             "dry_run": self._risk.is_dry_run,
+            "paper_portfolio": paper_portfolio,
         }

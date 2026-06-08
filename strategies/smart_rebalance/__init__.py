@@ -66,22 +66,24 @@ class SmartRebalance(Strategy):
         """Fetch real portfolio balances from the connected exchange."""
         if not self._exchange_manager:
             return
-        # Skip if exchange is not connected (e.g., dry-run mode)
-        if self._exchange_id not in self._exchange_manager.connected:
-            return
         try:
+            connected = getattr(self._exchange_manager, "connected", [])
+            if isinstance(connected, list) and self._exchange_id not in connected:
+                log.info("smart_rebalance.exchange_not_connected", exchange=self._exchange_id)
+                return
+
             balance = await self._exchange_manager.get_balance(self._exchange_id)
             total_info = balance.get("total", {})
-            # Convert to USD-value holdings keyed by target symbols
             holdings: dict[str, float] = {}
             for symbol in self._targets:
-                # e.g. "BTC/USDT" → "BTC", "USDT" → "USDT"
                 asset = symbol.split("/")[0]
                 amount = float(total_info.get(asset, 0))
                 if amount > 0:
-                    holdings[symbol] = amount  # Approximate (real value needs price)
+                    holdings[symbol] = amount
             if holdings:
                 self._holdings = holdings
+        except ValueError as e:
+            log.info("smart_rebalance.exchange_unavailable", exchange=self._exchange_id, error=str(e))
         except Exception:
             log.exception("smart_rebalance.refresh_holdings_error")
 
@@ -165,12 +167,17 @@ class SmartRebalance(Strategy):
                 continue
 
             try:
+                exchange_id = self._executor.default_exchange
                 if trade_usd > 0:
-                    # Over-weight: sell
-                    order = await self._executor.market_sell("binance", symbol, abs(trade_usd))
+                    # Over-weight: sell. NOTE: market_sell takes a BASE quantity; passing
+                    # USD here is only correct in dry_run. Left disabled for live until a
+                    # price→base conversion is added (see STRATEGY review).
+                    order = await self._executor.market_sell(exchange_id, symbol, abs(trade_usd))
                 else:
-                    # Under-weight: buy
-                    order = await self._executor.market_buy("binance", symbol, abs(trade_usd))
+                    # Under-weight: buy by USD cost.
+                    order = await self._executor.market_buy_cost(
+                        exchange_id, symbol, abs(trade_usd)
+                    )
                 executed.append(
                     {
                         "symbol": symbol,

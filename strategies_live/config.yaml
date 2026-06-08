@@ -1,0 +1,48 @@
+common:
+  timeframe: 1d
+  lookback: 1500
+  start_balance: 1000
+  risk_per_trade: 0.015
+  max_open_positions: 4
+  max_portfolio_risk: 0.06
+  fee_rate: 0.001
+  slippage_rate: 0.002
+  exchange_id: binanceus
+  btc_regime_ema: 200
+
+donchian:
+  entry_channel: 55
+  exit_channel: 20
+  atr_period: 14
+  atr_stop_mult: 2.0
+  symbols:
+    - BTC/USDT
+    - ETH/USDT
+    - SOL/USDT
+    - INJ/USDT
+    - DYDX/USDT
+    - SUI/USDT
+    - RNDR/USDT
+    - LINK/USDT
+    - AVAX/USDT
+
+rsi2:
+  rsi_period: 2
+  entry: 5
+  exit: 70
+  low_confirm_lookback: 5
+  time_stop_days: 10
+  day5_green_check: 5
+  trend_ma: 200
+  atr_period: 14
+  atr_stop_mult: 2.5
+  symbols:
+    - SOL/USDT
+    - INJ/USDT
+    - DYDX/USDT
+    - GMX/USDT
+    - SUI/USDT
+    - RNDR/USDT
+    - FET/USDT
+    - AVAX/USDT
+    - NEAR/USDT

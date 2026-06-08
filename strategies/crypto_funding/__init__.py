@@ -106,7 +106,7 @@ class CryptoFunding(Strategy):
         try:
             # In dry_run mode, just record what would happen
             order = await self._executor.market_sell(
-                "binance",
+                self._executor.default_exchange,
                 opp.data["symbol"],
                 opp.money_involved,
             )

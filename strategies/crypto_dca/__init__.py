@@ -6,7 +6,7 @@ No LLM needed — pure rules engine.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import structlog
 
@@ -39,13 +39,14 @@ class CryptoDCA(Strategy):
         self._coin = coin or cfg.get("coin", "bitcoin")
         self._symbol = symbol or cfg.get("symbol", "BTC/USDT")
         self._amount_usd = amount_usd if amount_usd is not None else cfg.get("amount_usd", 10.0)
-        self._exchange_id = exchange_id or cfg.get("exchange_id", "binance")
+        # None => resolve to the executor's configured default exchange at run time.
+        self._exchange_id = exchange_id or cfg.get("exchange_id")
         self._executor = executor
         self._last_buy: datetime | None = None
 
     async def scan(self) -> list[Opportunity]:
         """Check if it's time to DCA. Returns opportunity if due."""
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
 
         # Simple: if we haven't bought today, generate opportunity
         if self._last_buy and self._last_buy.date() == now.date():
@@ -76,18 +77,23 @@ class CryptoDCA(Strategy):
             return Result(success=False, profit_loss=0, details={"error": "no executor configured"})
 
         try:
-            order = await self._executor.market_buy(
-                self._exchange_id,
+            exchange_id = self._exchange_id or self._executor.default_exchange
+            # Buy by USD COST (spend $amount_usd), not base quantity — see market_buy_cost.
+            order = await self._executor.market_buy_cost(
+                exchange_id,
                 self._symbol,
-                opp.data["amount_usd"],
+                float(opp.data["amount_usd"]),
             )
-            self._last_buy = datetime.now(UTC)
+            success = order.status not in ("failed", "blocked")
+            if success:
+                self._last_buy = datetime.now(timezone.utc)
             return Result(
-                success=order.status != "failed",
+                success=success,
                 profit_loss=0,  # DCA P&L is long-term
                 details={
                     "order_id": order.id,
                     "filled": order.filled,
+                    "status": order.status,
                     "dry_run": order.dry_run,
                 },
             )

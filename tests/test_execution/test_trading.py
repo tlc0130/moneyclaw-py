@@ -86,3 +86,67 @@ class TestExchangeManager:
         em = ExchangeManager()
         with pytest.raises(ValueError, match="not connected"):
             em.get("binance")
+
+    def test_connect_uses_async_ccxt(self) -> None:
+        """RC1 regression: the executor awaits every ccxt call, so connect() MUST
+        produce an async (ccxt.async_support) exchange whose methods are coroutines.
+
+        With the old synchronous `import ccxt`, create_order/fetch_balance are plain
+        functions; awaiting them raises TypeError, which the executor swallowed,
+        marking every live order 'failed' and silently never trading.
+        """
+        import inspect
+
+        em = ExchangeManager()
+        em.connect("binanceus")  # no keys needed just to instantiate
+        ex = em.get("binanceus")
+        assert inspect.iscoroutinefunction(ex.create_order), (
+            "create_order must be a coroutine (use ccxt.async_support)"
+        )
+        assert inspect.iscoroutinefunction(ex.fetch_balance), (
+            "fetch_balance must be a coroutine (use ccxt.async_support)"
+        )
+
+
+class TestExecutorSafetyAndSizing:
+    async def test_default_exchange_is_exposed(self) -> None:
+        em = ExchangeManager()
+        ex = TradeExecutor(em, dry_run=True, default_exchange="binanceus")
+        assert ex.default_exchange == "binanceus"
+
+    async def test_market_buy_cost_dry_run(self) -> None:
+        """RC4: buying a USD *cost* (quote amount), not a base quantity."""
+        em = ExchangeManager()
+        ex = TradeExecutor(em, dry_run=True, default_exchange="binanceus")
+        order = await ex.market_buy_cost("binanceus", "BTC/USDT", 10.0)
+        assert order.side == "buy"
+        assert order.type == "market"
+        assert order.dry_run is True
+        assert order.status == "closed"
+        assert order.cost == 10.0
+
+    async def test_per_order_usd_cap_blocks_oversized(self) -> None:
+        """Hard safety guard: an order above max_order_usd must not place."""
+        em = ExchangeManager()
+        ex = TradeExecutor(em, dry_run=True, default_exchange="binanceus", max_order_usd=25.0)
+        order = await ex.market_buy_cost("binanceus", "BTC/USDT", 1000.0)
+        assert order.status == "blocked"
+        assert order.filled == 0.0
+
+
+class _FakeBalanceExchange:
+    """Minimal async ccxt stand-in exposing fetch_balance."""
+
+    async def fetch_balance(self) -> dict:
+        return {"free": {"USD": 30.0, "USDT": 12.5, "BTC": 0.01}, "total": {}}
+
+    async def close(self) -> None:  # pragma: no cover - cleanup hook
+        pass
+
+
+class TestAvailableQuoteBalance:
+    async def test_sums_free_quote_currencies(self) -> None:
+        em = ExchangeManager()
+        em._exchanges["binanceus"] = _FakeBalanceExchange()  # inject without network
+        free = await em.get_available_quote_balance("binanceus", ("USD", "USDT", "USDC"))
+        assert free == pytest.approx(42.5)  # 30 USD + 12.5 USDT; BTC ignored

@@ -17,8 +17,20 @@ def discover_strategies(strategies_dir: str | Path) -> list[type[Strategy]]:
     """Discover Strategy subclasses from Python files in the strategies directory."""
     path = Path(strategies_dir)
     if not path.exists():
-        log.warning("plugins.dir_missing", path=str(path))
-        return []
+        # A misconfigured STRATEGIES_DIR (e.g. a Windows path on a Linux VPS) would
+        # otherwise silently load ZERO strategies — the agent runs but never trades.
+        # Fail loudly and fall back to the repo's bundled ./strategies directory.
+        fallback = Path("strategies")
+        log.error(
+            "plugins.dir_missing",
+            path=str(path),
+            fallback=str(fallback),
+            hint="STRATEGIES_DIR does not exist; check it is valid on this host's OS.",
+        )
+        if fallback.exists() and fallback.resolve() != path.resolve():
+            path = fallback
+        else:
+            return []
 
     found: list[type[Strategy]] = []
 

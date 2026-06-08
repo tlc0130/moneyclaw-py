@@ -1,0 +1,540 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import ccxt
+import pandas as pd
+import structlog
+import yaml
+
+from moneyclaw.execution.trading import TradeExecutor
+from moneyclaw.plugins.base import Opportunity, Result, Score, Strategy
+
+log = structlog.get_logger()
+
+_CONFIG_PATH = Path(__file__).with_name("config.yaml")
+_FRAME_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
+_CACHE_TTL_SECONDS = 900.0
+
+
+@dataclass
+class Position:
+    symbol: str
+    strategy: str
+    entry: float
+    qty: float
+    hard_stop: float
+    entry_time: datetime
+    entry_fee: float
+
+
+def _load_config() -> dict[str, Any]:
+    if not _CONFIG_PATH.exists():
+        return {}
+    try:
+        return yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:
+        log.exception("combined_strategy.config_error", path=str(_CONFIG_PATH))
+        return {}
+
+
+def _exchange(exchange_id: str = "binanceus") -> ccxt.Exchange:
+    exchange_class = getattr(ccxt, exchange_id, None)
+    if exchange_class is None:
+        raise ValueError(f"Unknown exchange: {exchange_id}")
+    return exchange_class({"enableRateLimit": True, "timeout": 30000})
+
+
+def _apply_entry_slippage(price: float, rate: float) -> float:
+    return price * (1 + rate)
+
+
+def _apply_exit_slippage(price: float, rate: float) -> float:
+    return price * (1 - rate)
+
+
+def _rsi(series: pd.Series, period: int) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(100)
+
+
+def _atr(df: pd.DataFrame, period: int) -> pd.Series:
+    prev_close = df["close"].shift(1)
+    tr = pd.concat(
+        [
+            df["high"] - df["low"],
+            (df["high"] - prev_close).abs(),
+            (df["low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def _fetch_ohlcv_paginated(exchange: ccxt.Exchange, symbol: str, timeframe: str, total_limit: int) -> list[list[float]]:
+    all_candles: list[list[float]] = []
+    per_call = 1000
+    now_ms = exchange.milliseconds()
+    tf_ms = int(exchange.parse_timeframe(timeframe) * 1000)
+    since = now_ms - (total_limit * tf_ms)
+
+    while len(all_candles) < total_limit:
+        last_error: Exception | None = None
+        batch: list[list[float]] = []
+        for attempt in range(3):
+            try:
+                batch = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=per_call)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                wait_seconds = min(2 ** attempt, 8)
+                log.warning(
+                    "combined_strategy.fetch_retry",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    attempt=attempt + 1,
+                    wait_seconds=wait_seconds,
+                    error=type(exc).__name__,
+                )
+                time.sleep(wait_seconds)
+        if last_error is not None:
+            raise last_error
+        if not batch:
+            break
+        all_candles.extend(batch)
+        since = int(batch[-1][0]) + tf_ms
+        if len(batch) < per_call:
+            break
+        time.sleep(max(getattr(exchange, "rateLimit", 0), 0) / 1000)
+
+    return all_candles[:total_limit]
+
+
+def _frame(exchange: ccxt.Exchange, symbol: str, timeframe: str, lookback: int) -> pd.DataFrame | None:
+    cache_key = (symbol, timeframe, lookback)
+    now = time.monotonic()
+    cached = _FRAME_CACHE.get(cache_key)
+    if cached and now - cached[0] < _CACHE_TTL_SECONDS:
+        return cached[1].copy()
+
+    candles = _fetch_ohlcv_paginated(exchange, symbol, timeframe, lookback)
+    if len(candles) < 250:
+        return None
+    df = pd.DataFrame(candles, columns=["time", "open", "high", "low", "close", "volume"])
+    df["time_dt"] = pd.to_datetime(df["time"], unit="ms", utc=True)
+    _FRAME_CACHE[cache_key] = (now, df)
+    return df.copy()
+
+
+class CombinedCryptoStrategy(Strategy):
+    name = "combined_crypto_strategy"
+    description = "Combined Donchian trend + RSI-2 mean reversion strategy"
+    risk_level = "medium"
+    min_llm_layer = 0
+
+    def __init__(self, executor: TradeExecutor | None = None) -> None:
+        cfg = _load_config()
+        common = cfg.get("common", {})
+        donchian = cfg.get("donchian", {})
+        rsi2 = cfg.get("rsi2", {})
+
+        self._executor = executor
+        self._exchange_id = str(common.get("exchange_id", "binanceus"))
+        self._exchange = _exchange(self._exchange_id)
+        self._timeframe = str(common.get("timeframe", "1d"))
+        self._lookback = int(common.get("lookback", 1500))
+        self._start_balance = float(common.get("start_balance", 1000.0))
+        self._balance = self._start_balance
+        self._risk_per_trade = float(common.get("risk_per_trade", 0.015))
+        self._max_open_positions = int(common.get("max_open_positions", 4))
+        self._max_portfolio_risk = float(common.get("max_portfolio_risk", 0.06))
+        self._fee_rate = float(common.get("fee_rate", 0.001))
+        self._slippage_rate = float(common.get("slippage_rate", 0.002))
+        self._btc_regime_ema = int(common.get("btc_regime_ema", 200))
+
+        self._donchian_entry_channel = int(donchian.get("entry_channel", 55))
+        self._donchian_exit_channel = int(donchian.get("exit_channel", 20))
+        self._donchian_atr_period = int(donchian.get("atr_period", 14))
+        self._donchian_atr_stop_mult = float(donchian.get("atr_stop_mult", 2.0))
+        self._donchian_symbols = list(donchian.get("symbols", []))
+
+        self._rsi_period = int(rsi2.get("rsi_period", 2))
+        self._rsi_entry = float(rsi2.get("entry", 5))
+        self._rsi_exit = float(rsi2.get("exit", 70))
+        self._low_confirm_lookback = int(rsi2.get("low_confirm_lookback", 5))
+        self._time_stop_days = int(rsi2.get("time_stop_days", 10))
+        self._day5_green_check = int(rsi2.get("day5_green_check", 5))
+        self._trend_ma = int(rsi2.get("trend_ma", 200))
+        self._rsi_atr_period = int(rsi2.get("atr_period", 14))
+        self._rsi_atr_stop_mult = float(rsi2.get("atr_stop_mult", 2.5))
+        self._rsi_symbols = list(rsi2.get("symbols", []))
+
+        self._positions: dict[tuple[str, str], Position] = {}
+        self._processed_actions: set[tuple[int, str, str, str]] = set()
+        self._all_symbols = sorted(set(self._donchian_symbols) | set(self._rsi_symbols) | {"BTC/USDT"})
+        self._symbol_backoff_until: dict[str, float] = {}
+        self._symbol_failures: dict[str, int] = {}
+
+    async def scan(self) -> list[Opportunity]:
+        # Size positions off REAL deployable equity in live mode (not the paper
+        # start_balance). _entry_risk_budget() = self._balance * risk_per_trade, so
+        # refreshing self._balance here scales every entry to the actual wallet.
+        await self._refresh_balance()
+        return await asyncio.to_thread(self._scan_sync)
+
+    async def _refresh_balance(self) -> None:
+        """In live mode, set self._balance to free quote balance on the exchange.
+
+        Falls back to the existing (paper/tracked) balance if the executor is in
+        dry_run, missing, or the balance call fails — never sizes to zero.
+        """
+        if self._executor is None or self._executor.dry_run:
+            return
+        try:
+            equity = await self._executor.exchange_manager.get_available_quote_balance(
+                self._exchange_id, ("USD", "USDT", "USDC")
+            )
+            if equity > 0:
+                self._balance = equity
+            else:
+                log.warning("combined_strategy.zero_equity", exchange=self._exchange_id)
+        except Exception:
+            log.warning("combined_strategy.balance_refresh_failed", exchange=self._exchange_id)
+
+    async def evaluate(self, opp: Opportunity) -> Score:
+        return Score(value=opp.pre_score or 0.8, threshold=0.4, reasoning=opp.title)
+
+    async def execute(self, opp: Opportunity) -> Result:
+        action = str(opp.data.get("action", ""))
+        symbol = str(opp.data.get("symbol", ""))
+        strategy_kind = str(opp.data.get("strategy_kind", ""))
+        bar_time = int(opp.data.get("bar_time", 0) or 0)
+        key = (symbol, strategy_kind)
+
+        if action == "entry":
+            qty = float(opp.data["qty"])
+            entry = float(opp.data["entry"])
+            hard_stop = float(opp.data["hard_stop"])
+            entry_fee = entry * qty * self._fee_rate
+            if self._executor:
+                order = await self._executor.market_buy(self._exchange_id, symbol, qty)
+                if order.status == "failed":
+                    return Result(success=False, details={"action": action, "symbol": symbol, "reason": "exchange_order_failed"})
+            self._balance -= entry_fee
+            self._positions[key] = Position(
+                symbol=symbol,
+                strategy=strategy_kind,
+                entry=entry,
+                qty=qty,
+                hard_stop=hard_stop,
+                entry_time=datetime.fromisoformat(str(opp.data["bar_time_iso"])),
+                entry_fee=entry_fee,
+            )
+            self._processed_actions.add((bar_time, action, symbol, strategy_kind))
+            return Result(
+                success=True,
+                profit_loss=0.0,
+                details={
+                    "action": action,
+                    "symbol": symbol,
+                    "strategy_kind": strategy_kind,
+                    "qty": qty,
+                    "entry": entry,
+                    "hard_stop": hard_stop,
+                    "tracked_balance": self._balance,
+                },
+            )
+
+        pos = self._positions.get(key)
+        if not pos:
+            return Result(success=False, details={"action": action, "symbol": symbol, "strategy_kind": strategy_kind, "reason": "no_open_position"})
+
+        exit_price = float(opp.data["exit"])
+        if self._executor:
+            order = await self._executor.market_sell(self._exchange_id, symbol, pos.qty)
+            if order.status == "failed":
+                return Result(success=False, details={"action": action, "symbol": symbol, "reason": "exchange_order_failed"})
+        exit_fee = exit_price * pos.qty * self._fee_rate
+        gross_pnl = (exit_price - pos.entry) * pos.qty
+        net_pnl = gross_pnl - exit_fee - pos.entry_fee
+        self._balance += gross_pnl - exit_fee
+        del self._positions[key]
+        self._processed_actions.add((bar_time, action, symbol, strategy_kind))
+        return Result(
+            success=True,
+            profit_loss=net_pnl,
+            details={
+                "action": action,
+                "symbol": symbol,
+                "strategy_kind": strategy_kind,
+                "qty": pos.qty,
+                "entry": pos.entry,
+                "exit": exit_price,
+                "exit_reason": opp.data.get("exit_reason"),
+                "tracked_balance": self._balance,
+            },
+        )
+
+    async def teardown(self) -> None:
+        self._positions.clear()
+        self._processed_actions.clear()
+        self._symbol_backoff_until.clear()
+        self._symbol_failures.clear()
+
+    def estimate_roi(self) -> float:
+        return 1.25
+
+    def _scan_sync(self) -> list[Opportunity]:
+        try:
+            symbol_data: dict[str, pd.DataFrame] = {}
+            now = time.monotonic()
+            for symbol in self._all_symbols:
+                if self._symbol_backoff_until.get(symbol, 0.0) > now:
+                    continue
+                try:
+                    df = _frame(self._exchange, symbol, self._timeframe, self._lookback)
+                    self._symbol_failures.pop(symbol, None)
+                    self._symbol_backoff_until.pop(symbol, None)
+                except Exception:
+                    failures = self._symbol_failures.get(symbol, 0) + 1
+                    self._symbol_failures[symbol] = failures
+                    cooldown_seconds = min(300, 30 * failures)
+                    self._symbol_backoff_until[symbol] = now + cooldown_seconds
+                    log.warning(
+                        "combined_strategy.symbol_fetch_failed",
+                        symbol=symbol,
+                        failures=failures,
+                        cooldown_seconds=cooldown_seconds,
+                    )
+                    continue
+                if df is None or len(df) < self._trend_ma + 50:
+                    continue
+
+                df = df.copy()
+                if symbol in self._donchian_symbols:
+                    df["entry_high"] = df["high"].rolling(self._donchian_entry_channel).max().shift(1)
+                    df["exit_low"] = df["low"].rolling(self._donchian_exit_channel).min().shift(1)
+                    df["donchian_atr"] = _atr(df, self._donchian_atr_period)
+                if symbol in self._rsi_symbols:
+                    df["rsi2"] = _rsi(df["close"], self._rsi_period)
+                    df["trend_ma"] = df["close"].rolling(self._trend_ma).mean()
+                    df["low_5d"] = df["low"].rolling(self._low_confirm_lookback).min()
+                    df["rsi_atr"] = _atr(df, self._rsi_atr_period)
+                symbol_data[symbol] = df
+
+            btc_df = symbol_data.get("BTC/USDT")
+            if btc_df is None or len(btc_df) < self._btc_regime_ema + 2:
+                return []
+            btc_ema = btc_df["close"].ewm(span=self._btc_regime_ema, adjust=False).mean().iloc[-2]
+            bullish = bool(btc_df.iloc[-2]["close"] > btc_ema)
+
+            opportunities: list[Opportunity] = []
+
+            for (symbol, strategy_kind), pos in list(self._positions.items()):
+                df = symbol_data.get(symbol)
+                if df is None:
+                    continue
+                signal = df.iloc[-2]
+                bar_time = int(signal["time"])
+                action_key = (bar_time, "exit", symbol, strategy_kind)
+                if action_key in self._processed_actions:
+                    continue
+
+                if strategy_kind == "donchian":
+                    exit_low = signal.get("exit_low")
+                    if pd.isna(exit_low):
+                        continue
+                    effective_exit = max(float(exit_low), pos.hard_stop)
+                    if float(signal["low"]) <= effective_exit:
+                        actual_exit = _apply_exit_slippage(effective_exit, self._slippage_rate)
+                        opportunities.append(
+                            Opportunity(
+                                strategy_name=self.name,
+                                title=f"Exit {symbol} on Donchian/stop trigger",
+                                money_involved=max(pos.qty * actual_exit, 0.0),
+                                data={
+                                    "action": "exit",
+                                    "strategy_kind": strategy_kind,
+                                    "symbol": symbol,
+                                    "qty": pos.qty,
+                                    "entry": pos.entry,
+                                    "exit": actual_exit,
+                                    "exit_reason": "Donchian Channel Exit" if float(exit_low) > pos.hard_stop else "Hard Stop",
+                                    "bar_time": bar_time,
+                                    "bar_time_iso": signal["time_dt"].isoformat(),
+                                },
+                                pre_score=0.95,
+                            )
+                        )
+                elif strategy_kind == "rsi2":
+                    days_held = (signal["time_dt"].to_pydatetime() - pos.entry_time).days
+                    exit_price_signal: float | None = None
+                    exit_reason: str | None = None
+                    if float(signal["low"]) <= pos.hard_stop:
+                        exit_price_signal = pos.hard_stop
+                        exit_reason = "Hard Stop"
+                    elif pd.notna(signal.get("rsi2")) and float(signal["rsi2"]) > self._rsi_exit:
+                        exit_price_signal = float(signal["close"])
+                        exit_reason = "RSI Exit"
+                    elif days_held >= self._day5_green_check and float(signal["close"]) < pos.entry:
+                        exit_price_signal = float(signal["close"])
+                        exit_reason = "Day-5 Red Cut"
+                    elif days_held >= self._time_stop_days:
+                        exit_price_signal = float(signal["close"])
+                        exit_reason = "Time Stop"
+
+                    if exit_reason and exit_price_signal is not None:
+                        opportunities.append(
+                            Opportunity(
+                                strategy_name=self.name,
+                                title=f"Exit {symbol} on RSI-2 rule ({exit_reason})",
+                                money_involved=max(pos.qty * exit_price_signal, 0.0),
+                                data={
+                                    "action": "exit",
+                                    "strategy_kind": strategy_kind,
+                                    "symbol": symbol,
+                                    "qty": pos.qty,
+                                    "entry": pos.entry,
+                                    "exit": _apply_exit_slippage(exit_price_signal, self._slippage_rate),
+                                    "exit_reason": exit_reason,
+                                    "bar_time": bar_time,
+                                    "bar_time_iso": signal["time_dt"].isoformat(),
+                                },
+                                pre_score=0.94,
+                            )
+                        )
+
+            for symbol in self._donchian_symbols:
+                if not self._can_open_more():
+                    break
+                key = (symbol, "donchian")
+                if key in self._positions:
+                    continue
+                df = symbol_data.get(symbol)
+                if df is None:
+                    continue
+                signal = df.iloc[-2]
+                bar_time = int(signal["time"])
+                action_key = (bar_time, "entry", symbol, "donchian")
+                if action_key in self._processed_actions:
+                    continue
+
+                entry_high = signal.get("entry_high")
+                atr_value = signal.get("donchian_atr")
+                if pd.isna(entry_high) or pd.isna(atr_value) or float(atr_value) <= 0:
+                    continue
+                if not bullish or not (float(signal["high"]) > float(entry_high)):
+                    continue
+
+                actual_entry = _apply_entry_slippage(float(entry_high), self._slippage_rate)
+                hard_stop = actual_entry - self._donchian_atr_stop_mult * float(atr_value)
+                if hard_stop <= 0 or hard_stop >= actual_entry:
+                    continue
+                risk_budget = self._entry_risk_budget()
+                qty = risk_budget / (actual_entry - hard_stop)
+                position_ratio = (actual_entry * qty) / max(self._balance, 1.0)
+                opportunities.append(
+                    Opportunity(
+                        strategy_name=self.name,
+                        title=f"Enter {symbol} on Donchian breakout",
+                        money_involved=risk_budget,
+                        data={
+                            "action": "entry",
+                            "strategy_kind": "donchian",
+                            "symbol": symbol,
+                            "entry": actual_entry,
+                            "qty": qty,
+                            "hard_stop": hard_stop,
+                            "risk_budget": risk_budget,
+                            "position_ratio": position_ratio,
+                            "bar_time": bar_time,
+                            "bar_time_iso": signal["time_dt"].isoformat(),
+                        },
+                        pre_score=0.82,
+                    )
+                )
+
+            for symbol in self._rsi_symbols:
+                if not self._can_open_more():
+                    break
+                key = (symbol, "rsi2")
+                if key in self._positions:
+                    continue
+                df = symbol_data.get(symbol)
+                if df is None:
+                    continue
+                signal = df.iloc[-2]
+                bar_time = int(signal["time"])
+                action_key = (bar_time, "entry", symbol, "rsi2")
+                if action_key in self._processed_actions:
+                    continue
+
+                rsi2 = signal.get("rsi2")
+                trend_ma = signal.get("trend_ma")
+                low_5d = signal.get("low_5d")
+                atr_value = signal.get("rsi_atr")
+                if pd.isna(rsi2) or pd.isna(trend_ma) or pd.isna(low_5d) or pd.isna(atr_value) or float(atr_value) <= 0:
+                    continue
+
+                rsi_oversold = float(rsi2) < self._rsi_entry
+                in_uptrend = float(signal["close"]) > float(trend_ma)
+                capitulation = float(signal["low"]) <= float(low_5d)
+                if not (bullish and rsi_oversold and in_uptrend and capitulation):
+                    continue
+
+                actual_entry = _apply_entry_slippage(float(signal["close"]), self._slippage_rate)
+                hard_stop = actual_entry - self._rsi_atr_stop_mult * float(atr_value)
+                if hard_stop <= 0 or hard_stop >= actual_entry:
+                    continue
+                risk_budget = self._entry_risk_budget()
+                qty = risk_budget / (actual_entry - hard_stop)
+                position_ratio = (actual_entry * qty) / max(self._balance, 1.0)
+                opportunities.append(
+                    Opportunity(
+                        strategy_name=self.name,
+                        title=f"Enter {symbol} on RSI-2 mean reversion",
+                        money_involved=risk_budget,
+                        data={
+                            "action": "entry",
+                            "strategy_kind": "rsi2",
+                            "symbol": symbol,
+                            "entry": actual_entry,
+                            "qty": qty,
+                            "hard_stop": hard_stop,
+                            "risk_budget": risk_budget,
+                            "position_ratio": position_ratio,
+                            "bar_time": bar_time,
+                            "bar_time_iso": signal["time_dt"].isoformat(),
+                        },
+                        pre_score=0.8,
+                    )
+                )
+
+            return opportunities
+        except Exception:
+            log.exception("combined_strategy.scan_failed")
+            return []
+
+    def _entry_risk_budget(self) -> float:
+        return max(self._balance * self._risk_per_trade, 1.0)
+
+    def _current_portfolio_risk(self) -> float:
+        balance = max(self._balance, 1.0)
+        return sum(((pos.entry - pos.hard_stop) * pos.qty) / balance for pos in self._positions.values())
+
+    def _can_open_more(self) -> bool:
+        if len(self._positions) >= self._max_open_positions:
+            return False
+        return self._current_portfolio_risk() + self._risk_per_trade <= self._max_portfolio_risk

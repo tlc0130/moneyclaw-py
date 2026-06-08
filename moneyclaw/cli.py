@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from typing import Any
 
 import click
@@ -35,6 +36,29 @@ def run(web: bool, telegram: bool) -> None:
     asyncio.run(_run(web=web, telegram=telegram))
 
 
+def _can_bind_web_port(host: str, port: int) -> bool:
+    """Return True when the configured web port is available for binding."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _summarize_storage_error(error: Exception) -> str:
+    """Condense noisy DuckDB open errors into a short operator-friendly message."""
+    text = " ".join(str(error).split())
+    lowered = text.lower()
+    if "being used by another process" in lowered or "file is already open in" in lowered:
+        return "database file is locked by another process"
+    return text
+
+
 async def _run(web: bool, telegram: bool) -> None:
     """Async entry point — wire everything together and start."""
     from moneyclaw.agent.brain import AgentBrain
@@ -49,14 +73,22 @@ async def _run(web: bool, telegram: bool) -> None:
     from moneyclaw.llm.cache import ResponseCache
     from moneyclaw.llm.cost_tracker import CostTracker
     from moneyclaw.llm.model_discovery import ModelDiscoveryService
+    from moneyclaw.llm.router import LLMLayer, LLMRouter
     from moneyclaw.llm.model_registry import SmartModelRegistry
     from moneyclaw.llm.performance_tracker import PerformanceTracker
+    from moneyclaw.llm.providers.base import NoOpLLMProvider
     from moneyclaw.llm.smart_router import SmartRouter
     from moneyclaw.plugins.loader import discover_strategies
     from moneyclaw.plugins.registry import StrategyRegistry
     from moneyclaw.scheduler.engine import Scheduler
 
     settings = Settings()
+
+    if web and not _can_bind_web_port(settings.web_host, settings.web_port):
+        raise click.ClickException(
+            f"Web dashboard port {settings.web_port} is already in use. "
+            f"Stop the existing service or change WEB_PORT before starting MoneyClaw again."
+        )
 
     # Initialize SmartRouter components with API keys from settings
     api_keys = {
@@ -95,6 +127,12 @@ async def _run(web: bool, telegram: bool) -> None:
     click.echo("Discovering available LLM models...")
     await llm.initialize()
     available_models = llm.get_available_models()
+    if not available_models and settings.risk.dry_run:
+        click.echo("No healthy LLM models found, using dry-run fallback evaluator.")
+        llm = LLMRouter(
+            providers={LLMLayer.LOCAL: NoOpLLMProvider()},
+            cost_tracker=cost_tracker,
+        )
 
     # Memory
     memory = Memory(db_path=settings.db_path)
@@ -103,15 +141,24 @@ async def _run(web: bool, telegram: bool) -> None:
     # Trading execution
     exchange_mgr = ExchangeManager()
     dry_run = settings.exchange.dry_run
+    default_exchange = settings.exchange.default_exchange
     if not dry_run:
-        # Connect configured exchanges
-        if settings.exchange.binance_api_key:
-            exchange_mgr.connect(
-                "binance", settings.exchange.binance_api_key, settings.exchange.binance_secret
+        api_key, secret, password = _resolve_exchange_keys(settings.exchange, default_exchange)
+        if api_key and secret:
+            exchange_mgr.connect(default_exchange, api_key, secret, password)
+        else:
+            click.echo(
+                f"WARNING: live mode (dry_run=false) but no API keys resolved for "
+                f"'{default_exchange}'. Orders will fail. Set EXCHANGE_{default_exchange.upper()}_API_KEY "
+                f"(or EXCHANGE_BINANCE_API_KEY as a fallback).",
+                err=True,
             )
-        if settings.exchange.okx_api_key:
-            exchange_mgr.connect("okx", settings.exchange.okx_api_key, settings.exchange.okx_secret)
-    executor = TradeExecutor(exchange_mgr, dry_run=dry_run)
+    executor = TradeExecutor(
+        exchange_mgr,
+        dry_run=dry_run,
+        default_exchange=default_exchange,
+        max_order_usd=(settings.exchange.max_order_usd or None),
+    )
 
     # Data feeds
     from moneyclaw.data.feeds.crypto import CryptoFeed
@@ -122,7 +169,17 @@ async def _run(web: bool, telegram: bool) -> None:
     crypto_feed = CryptoFeed()
     stock_feed = StockFeed()
     _news_feed = NewsFeed()  # noqa: F841 — reserved for news-based strategies
-    storage = MarketStorage(settings.data.duckdb_path)
+    storage_path = settings.data.duckdb_path
+    try:
+        storage = MarketStorage(storage_path)
+    except Exception as e:
+        fallback_path = "data/market.runtime.duckdb"
+        reason = _summarize_storage_error(e)
+        click.echo(
+            f"Warning: could not open {storage_path} ({reason}). Falling back to {fallback_path}.",
+            err=True,
+        )
+        storage = MarketStorage(fallback_path)
 
     # Components
     evaluator = Evaluator(llm=llm)
@@ -181,6 +238,11 @@ async def _run(web: bool, telegram: bool) -> None:
     # Build tasks list
     tasks: list[asyncio.Task] = []
 
+    # Create strategy chat interface for AI-powered strategy management
+    from moneyclaw.agent.strategy_chat import StrategyChatInterface
+
+    strategy_chat = StrategyChatInterface(llm_router=llm, strategy_registry=strategies)
+
     # Start agent brain
     tasks.append(asyncio.create_task(brain.start()))
 
@@ -199,10 +261,6 @@ async def _run(web: bool, telegram: bool) -> None:
             strategy_chat=strategy_chat,
         )
         tasks.append(asyncio.create_task(tg_bot.start()))
-
-    # Create strategy chat interface for AI-powered strategy management
-    from moneyclaw.agent.strategy_chat import StrategyChatInterface
-    strategy_chat = StrategyChatInterface(llm_router=llm, strategy_registry=strategies)
 
     # Start web dashboard
     if web:
@@ -228,7 +286,10 @@ async def _run(web: bool, telegram: bool) -> None:
         model_info.append(f"{m.display_name} ({m.cost_tier.name})")
     if len(available_models) > 5:
         model_info.append(f"... and {len(available_models) - 5} more")
-    click.echo(f"LLM models: {', '.join(model_info)}")
+    if model_info:
+        click.echo(f"LLM models: {', '.join(model_info)}")
+    else:
+        click.echo("LLM models: none available (using dry-run fallback)")
     click.echo(f"Budget: ${settings.llm.daily_llm_budget:.2f}/day")
 
     if web:
@@ -238,8 +299,24 @@ async def _run(web: bool, telegram: bool) -> None:
         await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         await brain.stop()
+    finally:
         storage.close()
         await memory.close()
+        await exchange_mgr.close_all()  # close async ccxt aiohttp sessions
+
+
+def _resolve_exchange_keys(ex_settings, exchange_id: str) -> tuple[str, str, str]:
+    """Resolve (api_key, secret, password) for an exchange.
+
+    Prefers the exchange-specific slot (e.g. EXCHANGE_BINANCEUS_API_KEY) and falls
+    back to the generic EXCHANGE_BINANCE_API_KEY slot — a common place to stash keys.
+    """
+    direct_key = getattr(ex_settings, f"{exchange_id}_api_key", "") or ""
+    direct_secret = getattr(ex_settings, f"{exchange_id}_secret", "") or ""
+    password = getattr(ex_settings, f"{exchange_id}_password", "") or ""
+    if direct_key and direct_secret:
+        return direct_key, direct_secret, password
+    return ex_settings.binance_api_key, ex_settings.binance_secret, password
 
 
 def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_manager):
@@ -350,6 +427,7 @@ async def _models() -> None:
     """Async model discovery and display."""
     from moneyclaw.config.settings import Settings
     from moneyclaw.llm.model_discovery import ModelDiscoveryService
+    from moneyclaw.llm.router import LLMLayer, LLMRouter
     from moneyclaw.llm.model_registry import SmartModelRegistry
 
     settings = Settings()
@@ -447,8 +525,10 @@ async def _strategy_chat(message: str) -> None:
     from moneyclaw.llm.cache import ResponseCache
     from moneyclaw.llm.cost_tracker import CostTracker
     from moneyclaw.llm.model_discovery import ModelDiscoveryService
+    from moneyclaw.llm.router import LLMLayer, LLMRouter
     from moneyclaw.llm.model_registry import SmartModelRegistry
     from moneyclaw.llm.performance_tracker import PerformanceTracker
+    from moneyclaw.llm.providers.base import NoOpLLMProvider
     from moneyclaw.llm.smart_router import SmartRouter
     from moneyclaw.plugins.registry import StrategyRegistry
 

@@ -7,7 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class TelegramSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TELEGRAM_")
+    model_config = SettingsConfigDict(
+        env_prefix="TELEGRAM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     token: str = ""
     chat_id: str = ""
@@ -54,7 +59,12 @@ class LLMSettings(BaseSettings):
 
 
 class RiskSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="RISK_")
+    model_config = SettingsConfigDict(
+        env_prefix="RISK_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     max_trade_amount: float = 50.0  # Max single trade in USD
     max_daily_loss: float = 100.0  # Stop-loss per day
@@ -74,21 +84,36 @@ class ExchangeConfig(BaseSettings):
 
 
 class ExchangeSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="EXCHANGE_")
+    model_config = SettingsConfigDict(
+        env_prefix="EXCHANGE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-    # Default exchange for strategies that don't specify one
-    default_exchange: str = "binance"
+    # Default exchange for strategies that don't specify one.
+    # US users: keep this "binanceus" — binance.com (ccxt "binance") is geo-blocked in the US.
+    default_exchange: str = "binanceus"
     dry_run: bool = True  # Global dry_run override
-    # Per-exchange configs loaded from env: BINANCE_API_KEY, etc.
+    # Hard per-order USD notional cap (defense against mis-sized orders). 0 = disabled.
+    max_order_usd: float = 25.0
+    # Per-exchange configs loaded from env: BINANCE_API_KEY, BINANCEUS_API_KEY, etc.
     binance_api_key: str = ""
     binance_secret: str = ""
+    binanceus_api_key: str = ""
+    binanceus_secret: str = ""
     okx_api_key: str = ""
     okx_secret: str = ""
     okx_password: str = ""
 
 
 class DataSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="DATA_")
+    model_config = SettingsConfigDict(
+        env_prefix="DATA_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     duckdb_path: str = "data/market.duckdb"
     price_poll_interval: int = 300  # 5 minutes
