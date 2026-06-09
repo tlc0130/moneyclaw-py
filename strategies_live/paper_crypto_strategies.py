@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,9 @@ from moneyclaw.plugins.base import Opportunity, Result, Score, Strategy
 log = structlog.get_logger()
 
 _CONFIG_PATH = Path(__file__).with_name("config.yaml")
+# Store state in the project's data/ dir (not the source tree) so it survives
+# in read-only deployments (Docker ro image layers, installed packages, etc.).
+_STATE_PATH = Path(__file__).parent.parent / "data" / ".combined_strategy_state.json"
 _FRAME_CACHE: dict[tuple[str, str, int], tuple[float, pd.DataFrame]] = {}
 _CACHE_TTL_SECONDS = 900.0
 
@@ -202,6 +206,7 @@ class CombinedCryptoStrategy(Strategy):
         # refresh + stop reconciliation still happen every tick.
         self._scan_min_interval = float(common.get("scan_min_interval_seconds", 1800))
         self._last_full_scan: float | None = None
+        self._load_state()
 
     async def scan(self) -> list[Opportunity]:
         # Size positions off REAL deployable equity in live mode (not the paper
@@ -321,6 +326,7 @@ class CombinedCryptoStrategy(Strategy):
                 stop_order_id=stop_order_id,
             )
             self._processed_actions.add((bar_time, action, symbol, strategy_kind))
+            self._save_state()
             return Result(
                 success=True,
                 profit_loss=0.0,
@@ -359,6 +365,7 @@ class CombinedCryptoStrategy(Strategy):
         self._balance += gross_pnl - exit_fee
         del self._positions[key]
         self._processed_actions.add((bar_time, action, symbol, strategy_kind))
+        self._save_state()
         return Result(
             success=True,
             profit_loss=net_pnl,
@@ -379,9 +386,69 @@ class CombinedCryptoStrategy(Strategy):
         self._processed_actions.clear()
         self._symbol_backoff_until.clear()
         self._symbol_failures.clear()
+        try:
+            if _STATE_PATH.exists():
+                _STATE_PATH.unlink()
+        except Exception:
+            log.exception("combined_strategy.state_delete_error", path=str(_STATE_PATH))
 
     def estimate_roi(self) -> float:
         return 1.25
+
+    def _load_state(self) -> None:
+        """Restore _positions and _processed_actions from the JSON state file."""
+        if not _STATE_PATH.exists():
+            return
+        try:
+            raw = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+
+            for key_list, pos_dict in raw.get("positions", []):
+                pos_dict["entry_time"] = datetime.fromisoformat(pos_dict["entry_time"])
+                key = (str(key_list[0]), str(key_list[1]))
+                self._positions[key] = Position(**pos_dict)
+
+            cutoff_ms = int(time.time() * 1000) - 7 * 86_400_000
+            for entry in raw.get("processed_actions", []):
+                bar_time_ms, action, symbol, strategy_kind = entry
+                if int(bar_time_ms) >= cutoff_ms:
+                    self._processed_actions.add(
+                        (int(bar_time_ms), str(action), str(symbol), str(strategy_kind))
+                    )
+
+            log.info(
+                "combined_strategy.state_loaded",
+                positions=len(self._positions),
+                processed_actions=len(self._processed_actions),
+            )
+        except Exception:
+            log.exception("combined_strategy.state_load_error", path=str(_STATE_PATH))
+
+    def _save_state(self) -> None:
+        """Atomically persist _positions and _processed_actions to the JSON state file."""
+        try:
+            _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            cutoff_ms = int(time.time() * 1000) - 7 * 86_400_000
+            pruned_actions = [
+                list(entry)
+                for entry in self._processed_actions
+                if entry[0] >= cutoff_ms
+            ]
+
+            pos_records = []
+            for (symbol, strategy_kind), pos in self._positions.items():
+                pos_dict = asdict(pos)
+                pos_dict["entry_time"] = pos.entry_time.isoformat()
+                pos_records.append([[symbol, strategy_kind], pos_dict])
+
+            payload = {
+                "positions": pos_records,
+                "processed_actions": pruned_actions,
+            }
+            tmp = _STATE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(_STATE_PATH)
+        except Exception:
+            log.exception("combined_strategy.state_save_error", path=str(_STATE_PATH))
 
     def _ensure_symbols_validated(self) -> None:
         """#4: drop configured symbols that don't exist on the exchange so we don't

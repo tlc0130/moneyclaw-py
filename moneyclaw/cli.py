@@ -257,10 +257,13 @@ async def _run(web: bool, telegram: bool) -> None:
     # Discover and register strategies — inject deps based on what they need.
     # Also scan strategies_live/ alongside the primary dir so live strategies
     # (e.g. combined_crypto_strategy) are loaded without requiring a config change.
+    # Use __file__-anchored absolute paths so the check is CWD-independent (systemd
+    # services often run from WorkingDirectory=/ rather than the repo root).
     from pathlib import Path as _Path
 
+    _repo_root = _Path(__file__).parent.parent
     strategy_classes = discover_strategies(settings.strategies_dir)
-    _live_dir = _Path("strategies_live")
+    _live_dir = _repo_root / "strategies_live"
     if _live_dir.exists() and _live_dir.resolve() != _Path(settings.strategies_dir).resolve():
         strategy_classes = strategy_classes + discover_strategies(_live_dir)
     for cls in strategy_classes:

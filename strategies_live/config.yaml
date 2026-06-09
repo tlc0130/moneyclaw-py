@@ -35,7 +35,7 @@ donchian:
 
 rsi2:
   rsi_period: 2
-  entry: 5
+  entry: 10
   exit: 70
   low_confirm_lookback: 5
   time_stop_days: 10
