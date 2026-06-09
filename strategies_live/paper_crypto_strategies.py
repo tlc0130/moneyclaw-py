@@ -450,7 +450,9 @@ class CombinedCryptoStrategy(Strategy):
                     df["donchian_atr"] = _atr(df, self._donchian_atr_period)
                 if symbol in self._rsi_symbols:
                     df["rsi2"] = _rsi(df["close"], self._rsi_period)
-                    df["trend_ma"] = df["close"].rolling(self._trend_ma).mean()
+                    # Use EWM (same as BTC regime filter) so both trend checks
+                    # respond to price at the same speed.
+                    df["trend_ma"] = df["close"].ewm(span=self._trend_ma, adjust=False).mean()
                     df["low_5d"] = df["low"].rolling(self._low_confirm_lookback).min()
                     df["rsi_atr"] = _atr(df, self._rsi_atr_period)
                 symbol_data[symbol] = df

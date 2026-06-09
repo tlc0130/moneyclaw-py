@@ -254,8 +254,15 @@ async def _run(web: bool, telegram: bool) -> None:
         executor=executor,
     )
 
-    # Discover and register strategies — inject deps based on what they need
+    # Discover and register strategies — inject deps based on what they need.
+    # Also scan strategies_live/ alongside the primary dir so live strategies
+    # (e.g. combined_crypto_strategy) are loaded without requiring a config change.
+    from pathlib import Path as _Path
+
     strategy_classes = discover_strategies(settings.strategies_dir)
+    _live_dir = _Path("strategies_live")
+    if _live_dir.exists() and _live_dir.resolve() != _Path(settings.strategies_dir).resolve():
+        strategy_classes = strategy_classes + discover_strategies(_live_dir)
     for cls in strategy_classes:
         instance = _instantiate_strategy(
             cls,
