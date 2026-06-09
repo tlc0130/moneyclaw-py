@@ -41,6 +41,26 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
     trade_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS paper_positions (
+    symbol TEXT PRIMARY KEY,
+    quantity REAL NOT NULL DEFAULT 0,
+    avg_entry REAL NOT NULL DEFAULT 0,
+    last_price REAL NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS paper_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    price REAL NOT NULL,
+    notional REAL NOT NULL,
+    realized_pnl REAL NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    details TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_opp_status ON opportunities(status);
 CREATE INDEX IF NOT EXISTS idx_opp_strategy ON opportunities(strategy);
 CREATE INDEX IF NOT EXISTS idx_results_date ON results(executed_at);
@@ -80,10 +100,17 @@ class Memory:
         assert self._db
         now = time.time()
 
+        await self._db.execute(
+            "INSERT OR IGNORE INTO opportunities"
+            " (id, strategy, title, data, score, status, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 'executed', ?, ?)",
+            (opp.id, opp.strategy_name, opp.title, json.dumps(opp.data), 0.0, now, now),
+        )
+
         # Update opportunity status
         await self._db.execute(
-            "UPDATE opportunities SET status = 'executed', updated_at = ? WHERE id = ?",
-            (now, opp.id),
+            "UPDATE opportunities SET strategy = ?, title = ?, data = ?, status = 'executed', updated_at = ? WHERE id = ?",
+            (opp.strategy_name, opp.title, json.dumps(opp.data), now, opp.id),
         )
 
         # Insert result
@@ -243,4 +270,89 @@ class Memory:
             "avg_pnl": avg_pnl,
             "recent_executions": recent_count,
             "recent_pnl": recent_pnl,
+        }
+
+    async def paper_buy(
+        self,
+        symbol: str,
+        quantity: float,
+        price: float,
+        details: dict | None = None,
+    ) -> None:
+        assert self._db
+        now = time.time()
+        async with self._db.execute(
+            "SELECT quantity, avg_entry FROM paper_positions WHERE symbol = ?", (symbol,)
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        current_qty = float(row[0]) if row else 0.0
+        current_avg = float(row[1]) if row else 0.0
+        new_qty = current_qty + quantity
+        new_avg = ((current_qty * current_avg) + (quantity * price)) / new_qty if new_qty > 0 else 0.0
+
+        await self._db.execute(
+            "INSERT INTO paper_positions (symbol, quantity, avg_entry, last_price, updated_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(symbol) DO UPDATE SET quantity = excluded.quantity, avg_entry = excluded.avg_entry, "
+            "last_price = excluded.last_price, updated_at = excluded.updated_at",
+            (symbol, new_qty, new_avg, price, now),
+        )
+        await self._db.execute(
+            "INSERT INTO paper_ledger (symbol, side, quantity, price, notional, realized_pnl, created_at, details) VALUES (?, 'buy', ?, ?, ?, 0, ?, ?)",
+            (symbol, quantity, price, quantity * price, now, json.dumps(details or {})),
+        )
+        await self._db.commit()
+
+    async def paper_mark_price(self, symbol: str, price: float) -> None:
+        assert self._db
+        await self._db.execute(
+            "UPDATE paper_positions SET last_price = ?, updated_at = ? WHERE symbol = ?",
+            (price, time.time(), symbol),
+        )
+        await self._db.commit()
+
+    async def get_paper_portfolio(self) -> dict:
+        assert self._db
+        async with self._db.execute(
+            "SELECT symbol, quantity, avg_entry, last_price FROM paper_positions WHERE quantity > 0"
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        positions = []
+        total_cost = 0.0
+        total_value = 0.0
+        for symbol, quantity, avg_entry, last_price in rows:
+            quantity = float(quantity)
+            avg_entry = float(avg_entry)
+            last_price = float(last_price)
+            cost = quantity * avg_entry
+            value = quantity * last_price
+            unrealized = value - cost
+            total_cost += cost
+            total_value += value
+            positions.append(
+                {
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "avg_entry": avg_entry,
+                    "last_price": last_price,
+                    "cost_basis": cost,
+                    "market_value": value,
+                    "unrealized_pnl": unrealized,
+                }
+            )
+
+        async with self._db.execute(
+            "SELECT COALESCE(SUM(realized_pnl), 0) FROM paper_ledger"
+        ) as cursor:
+            realized_row = await cursor.fetchone()
+            realized_pnl = float(realized_row[0] if realized_row else 0.0)
+
+        return {
+            "positions": positions,
+            "total_cost_basis": total_cost,
+            "total_market_value": total_value,
+            "unrealized_pnl": total_value - total_cost,
+            "realized_pnl": realized_pnl,
+            "total_pnl": realized_pnl + (total_value - total_cost),
         }

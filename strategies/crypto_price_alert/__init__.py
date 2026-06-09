@@ -6,6 +6,7 @@ The simplest possible strategy: no LLM needed, just price checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import monotonic
 
 import httpx
 import structlog
@@ -54,6 +55,8 @@ class CryptoPriceAlert(Strategy):
         self._alerts = alerts or [PriceAlert(**a) for a in alert_defs]
         self._last_prices: dict[str, float] = {}
         self._triggered: set[str] = set()
+        self._cached_prices: dict[str, float] = {}
+        self._cache_expires_at: float = 0.0
 
     async def scan(self) -> list[Opportunity]:
         """Check current prices against alert thresholds."""
@@ -120,9 +123,12 @@ class CryptoPriceAlert(Strategy):
         """Alerts are free to run, ROI is infinite in a sense — but 0 direct profit."""
         return 0.0
 
-    @staticmethod
-    async def _fetch_prices(coins: list[str]) -> dict[str, float]:
-        """Fetch prices from CoinGecko free API."""
+    async def _fetch_prices(self, coins: list[str]) -> dict[str, float]:
+        """Fetch prices from CoinGecko free API with short-lived caching."""
+        now = monotonic()
+        if self._cached_prices and now < self._cache_expires_at:
+            return {coin: self._cached_prices[coin] for coin in coins if coin in self._cached_prices}
+
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(
@@ -131,7 +137,19 @@ class CryptoPriceAlert(Strategy):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                return {coin: data[coin]["usd"] for coin in coins if coin in data}
-        except Exception:
-            log.exception("crypto_price_alert.fetch_error")
+                prices = {coin: data[coin]["usd"] for coin in coins if coin in data}
+                if prices:
+                    self._cached_prices = prices
+                    self._cache_expires_at = monotonic() + 60
+                return prices
+        except Exception as e:
+            log.warning(
+                "crypto_price_alert.fetch_failed",
+                coins=coins,
+                error=str(e),
+                error_type=type(e).__name__,
+                error_repr=repr(e),
+            )
+            if self._cached_prices:
+                return {coin: self._cached_prices[coin] for coin in coins if coin in self._cached_prices}
             return {}

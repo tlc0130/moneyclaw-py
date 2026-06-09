@@ -14,6 +14,11 @@ export class Api {
         return await res.json();
     }
 
+    async getRecentActions() {
+        const res = await fetch('/api/history');
+        return await res.json();
+    }
+
     // Strategy Management API
     async strategyChat(message) {
         const res = await fetch('/api/strategy/chat', {
@@ -35,6 +40,15 @@ export class Api {
 
     async getStrategyTemplates() {
         const res = await fetch('/api/strategy/templates');
+        return await res.json();
+    }
+
+    async analyzeStrategies(strategyName = null) {
+        const res = await fetch('/api/strategy/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ strategy_name: strategyName })
+        });
         return await res.json();
     }
 

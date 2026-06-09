@@ -69,3 +69,14 @@ class TestMemory:
         history = await memory.get_history()
         assert len(history) == 1
         assert history[0]["profit_loss"] == 10.0
+
+    @pytest.mark.asyncio
+    async def test_paper_portfolio_tracks_buys(self, memory: Memory) -> None:
+        await memory.paper_buy("BTC", quantity=0.1, price=50000.0, details={"dry_run": True})
+        await memory.paper_mark_price("BTC", 52000.0)
+
+        portfolio = await memory.get_paper_portfolio()
+        assert len(portfolio["positions"]) == 1
+        assert portfolio["positions"][0]["symbol"] == "BTC"
+        assert portfolio["positions"][0]["market_value"] == pytest.approx(5200.0)
+        assert portfolio["total_pnl"] == pytest.approx(200.0)

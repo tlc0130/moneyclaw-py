@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import litellm
 import structlog
 from litellm import acompletion, cost_per_token
 
 from moneyclaw.llm.providers.base import LLMProvider, LLMResponse
+
+litellm.suppress_debug_info = True
 
 log = structlog.get_logger()
 
@@ -88,6 +91,11 @@ class LiteLLMProvider(LLMProvider):
                 api_base=self._api_base,
             )
             return bool(resp.choices)
-        except Exception:
-            log.warning("litellm.unavailable", model=self._model)
+        except Exception as e:
+            log.debug(
+                "litellm.unavailable",
+                model=self._model,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
             return False

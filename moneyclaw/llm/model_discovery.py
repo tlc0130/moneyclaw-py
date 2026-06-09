@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,48 @@ from moneyclaw.llm.model_intelligence import create_profile_from_model_id
 from moneyclaw.llm.model_profile import ModelProfile
 
 log = structlog.get_logger()
+
+_EXCLUDED_MODEL_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"(?:^|[-_/])(audio|transcribe|tts|image|realtime|search)(?:$|[-_/])"),
+    re.compile(r"(?:^|[-_/])nano(?:$|[-_/])"),
+]
+
+_CURATED_MODELS: dict[str, list[str]] = {
+    "openai": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-chat-latest",
+    ],
+    "anthropic": [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
+    ],
+    "deepseek": ["deepseek-chat", "deepseek-coder"],
+    "groq": [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+    ],
+    "gemini": ["gemini-1.5-pro", "gemini-1.5-flash"],
+    "moonshot": ["kimi-k2", "kimi-k1.5", "kimi-k1"],
+}
+
+
+def _is_practical_model(provider: str, model_id: str) -> bool:
+    """Keep discovery focused on a curated set of plausible chat/completion candidates."""
+    value = model_id.lower()
+    if any(pattern.search(value) for pattern in _EXCLUDED_MODEL_PATTERNS):
+        return False
+    curated = _CURATED_MODELS.get(provider)
+    if curated:
+        return value in {name.lower() for name in curated}
+    return True
+
 
 # Provider模型列表API配置
 PROVIDER_CONFIGS: dict[str, dict[str, Any]] = {
@@ -26,10 +69,9 @@ PROVIDER_CONFIGS: dict[str, dict[str, Any]] = {
     "anthropic": {
         # Anthropic 没有模型列表API，使用固定列表
         "fixed_models": [
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
             "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
         ],
         "api_key_env": "ANTHROPIC_API_KEY",
     },
@@ -173,9 +215,12 @@ class ModelDiscoveryService:
         try:
             # 处理固定模型列表（如Anthropic）
             if "fixed_models" in config:
-                models = self._create_profiles_from_list(
-                    provider, config["fixed_models"]
-                )
+                fixed_model_ids = [
+                    model_id if "/" in model_id else f"{provider}/{model_id}"
+                    for model_id in config["fixed_models"]
+                    if _is_practical_model(provider, model_id)
+                ]
+                models = self._create_profiles_from_list(provider, fixed_model_ids)
                 return DiscoveryResult(provider=provider, models=models, success=True)
 
             # 处理API查询
@@ -256,6 +301,9 @@ class ModelDiscoveryService:
 
             # 应用过滤器
             if filter_fn and not filter_fn(model_data):
+                continue
+
+            if not _is_practical_model(provider, model_id):
                 continue
 
             # 构建完整的model_id格式

@@ -1,6 +1,6 @@
 """Tests for DataFeed base classes and data types."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from moneyclaw.data.feeds.base import OHLCV, Quote
 
@@ -17,7 +17,7 @@ class TestQuote:
         assert isinstance(q.timestamp, datetime)
 
     def test_full_quote(self) -> None:
-        ts = datetime(2025, 1, 1, tzinfo=UTC)
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         q = Quote(
             symbol="ETH",
             price=3000.0,
@@ -35,7 +35,7 @@ class TestQuote:
 
 class TestOHLCV:
     def test_creation(self) -> None:
-        ts = datetime(2025, 1, 1, tzinfo=UTC)
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         bar = OHLCV(timestamp=ts, open=100, high=110, low=90, close=105, volume=5000)
         assert bar.open == 100
         assert bar.high == 110
@@ -44,6 +44,6 @@ class TestOHLCV:
         assert bar.volume == 5000
 
     def test_default_volume(self) -> None:
-        ts = datetime(2025, 1, 1, tzinfo=UTC)
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         bar = OHLCV(timestamp=ts, open=100, high=110, low=90, close=105)
         assert bar.volume == 0.0

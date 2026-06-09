@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 import pytest
 
@@ -20,7 +20,7 @@ def storage(tmp_path) -> MarketStorage:
 
 class TestStoreQuotes:
     def test_store_and_retrieve(self, storage: MarketStorage) -> None:
-        ts = datetime(2025, 1, 1, 12, 0, tzinfo=UTC)
+        ts = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
         quotes = [
             Quote(symbol="BTC", price=65000.0, timestamp=ts, volume=30e9, change_24h=2.5),
             Quote(symbol="BTC", price=65100.0, timestamp=ts + timedelta(minutes=5), volume=31e9),
@@ -34,7 +34,7 @@ class TestStoreQuotes:
         assert result[1].price == 65100.0
 
     def test_query_with_time_range(self, storage: MarketStorage) -> None:
-        base = datetime(2025, 1, 1, tzinfo=UTC)
+        base = datetime(2025, 1, 1, tzinfo=timezone.utc)
         quotes = [
             Quote(symbol="ETH", price=3000 + i * 10, timestamp=base + timedelta(hours=i))
             for i in range(24)
@@ -53,7 +53,7 @@ class TestStoreQuotes:
 
 class TestStoreOHLCV:
     def test_store_and_retrieve(self, storage: MarketStorage) -> None:
-        base = datetime(2025, 1, 1, tzinfo=UTC)
+        base = datetime(2025, 1, 1, tzinfo=timezone.utc)
         bars = [
             OHLCV(
                 timestamp=base + timedelta(days=i),
@@ -73,7 +73,7 @@ class TestStoreOHLCV:
         assert result[4].close == 109
 
     def test_query_different_symbols(self, storage: MarketStorage) -> None:
-        ts = datetime(2025, 1, 1, tzinfo=UTC)
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         storage.store_ohlcv(
             "BTC", [OHLCV(timestamp=ts, open=65000, high=66000, low=64000, close=65500)]
         )

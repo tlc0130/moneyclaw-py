@@ -129,30 +129,43 @@ class SmartModelRegistry:
         results = await asyncio.gather(*check_tasks, return_exceptions=True)
 
         healthy_models: list[ModelProfile] = []
+        unhealthy_details: list[dict[str, str]] = []
         for model, result in zip(models, results):
             if isinstance(result, Exception):
-                log.warning(
-                    "registry.model_unhealthy",
-                    model=model.model_id,
-                    reason="health_check_exception",
-                    error=str(result),
+                unhealthy_details.append(
+                    {
+                        "model": model.model_id,
+                        "reason": "health_check_exception",
+                        "error": str(result),
+                    }
                 )
-                # 标记为不可用
                 model = ModelProfile(
                     **{**model.__dict__, "is_available": False}
                 )
             elif result is True:
-                # 健康检查通过
                 healthy_models.append(model)
             else:
-                log.warning(
-                    "registry.model_unhealthy",
-                    model=model.model_id,
-                    reason="health_check_failed",
+                unhealthy_details.append(
+                    {
+                        "model": model.model_id,
+                        "reason": "health_check_failed",
+                    }
                 )
-                # 标记为不可用
                 model = ModelProfile(
                     **{**model.__dict__, "is_available": False}
+                )
+
+        if unhealthy_details:
+            sample = unhealthy_details[:5]
+            log.warning(
+                "registry.health_check_unhealthy_summary",
+                unhealthy=len(unhealthy_details),
+                sample=sample,
+            )
+            if len(unhealthy_details) > len(sample):
+                log.debug(
+                    "registry.health_check_unhealthy_full",
+                    details=unhealthy_details,
                 )
 
         return healthy_models

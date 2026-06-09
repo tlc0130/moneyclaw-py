@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -34,7 +34,7 @@ class TestCryptoDCAScan:
         assert opps[0].pre_score == 0.9
 
     async def test_no_duplicate_same_day(self, strategy: CryptoDCA) -> None:
-        strategy._last_buy = datetime.now(UTC)
+        strategy._last_buy = datetime.now(timezone.utc)
         opps = await strategy.scan()
         assert len(opps) == 0
 

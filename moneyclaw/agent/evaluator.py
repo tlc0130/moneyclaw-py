@@ -46,23 +46,54 @@ class Evaluator:
             f"Score it 0-1."
         )
 
-        response = await self._llm.complete(
-            TaskRequest(
-                prompt=prompt,
-                system=EVAL_SYSTEM,
-                min_layer=LLMLayer.LOCAL,
-                max_layer=LLMLayer.CHEAP,
-                money_involved=opp.money_involved,
-                complexity=0.3,
-                cache_ttl=300,  # Cache evaluations for 5 minutes
-            )
-        )
-
         try:
-            value = float(response.text.strip())
-            value = max(0.0, min(1.0, value))
-        except ValueError:
-            log.warning("evaluator.parse_error", text=response.text)
-            value = 0.0
+            response = await self._llm.complete(
+                TaskRequest(
+                    prompt=prompt,
+                    system=EVAL_SYSTEM,
+                    min_layer=LLMLayer.LOCAL,
+                    max_layer=LLMLayer.CHEAP,
+                    money_involved=opp.money_involved,
+                    complexity=0.3,
+                    cache_ttl=300,  # Cache evaluations for 5 minutes
+                )
+            )
 
-        return Score(value=value, threshold=self._threshold, reasoning=response.text)
+            try:
+                value = float(response.text.strip())
+                value = max(0.0, min(1.0, value))
+            except ValueError:
+                log.warning("evaluator.parse_error", text=response.text)
+                value = 0.0
+
+            return Score(value=value, threshold=self._threshold, reasoning=response.text)
+        except Exception as e:
+            log.warning("evaluator.llm_unavailable", strategy=opp.strategy_name, error=str(e))
+            fallback = self._fallback_score(opp)
+            return Score(value=fallback, threshold=self._threshold, reasoning="fallback:no-llm")
+
+    def _fallback_score(self, opp: Opportunity) -> float:
+        """Conservative heuristic when no LLM model is available."""
+        data = opp.data
+        score = 0.3
+
+        if opp.money_involved <= 0:
+            score += 0.1
+
+        div_yield = data.get("dividend_yield")
+        if isinstance(div_yield, (int, float)):
+            if 0.04 <= div_yield <= 0.12:
+                score += 0.3
+            elif 0.02 <= div_yield < 0.04:
+                score += 0.15
+            elif div_yield > 0.12:
+                score -= 0.1
+
+        pe_ratio = data.get("pe_ratio")
+        if isinstance(pe_ratio, (int, float)):
+            if pe_ratio <= 20:
+                score += 0.2
+            elif pe_ratio >= 35:
+                score -= 0.1
+
+        return max(0.0, min(1.0, score))

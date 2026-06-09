@@ -51,12 +51,18 @@ async function updateStatus() {
         if (walletEl && walletLabelEl) {
             const walletValue = status.wallet_value || 0;
             const isDryRun = status.dry_run;
+            const paperPortfolio = status.paper_portfolio;
 
             if (walletValue > 0 && !isDryRun) {
                 walletEl.innerText = `$${walletValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
                 walletLabelEl.innerText = 'Live Trading';
                 walletLabelEl.className = 'text-[9px] text-green-500';
                 walletEl.className = 'text-2xl font-bold font-orbitron text-cyan-300';
+            } else if (isDryRun && paperPortfolio && paperPortfolio.total_market_value > 0) {
+                walletEl.innerText = `$${paperPortfolio.total_market_value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                walletLabelEl.innerText = `Paper P&L ${paperPortfolio.total_pnl >= 0 ? '+' : ''}$${paperPortfolio.total_pnl.toFixed(2)}`;
+                walletLabelEl.className = `text-[9px] ${paperPortfolio.total_pnl >= 0 ? 'text-green-500' : 'text-red-400'}`;
+                walletEl.className = 'text-2xl font-bold font-orbitron text-yellow-400';
             } else if (isDryRun) {
                 walletEl.innerText = 'DRY RUN';
                 walletLabelEl.innerText = 'Simulation Mode';
@@ -73,14 +79,20 @@ async function updateStatus() {
         // Update P&L
         const pnlEl = document.getElementById('stat-pnl');
         if (pnlEl) {
-            pnlEl.innerText = `$${status.today_pnl.toFixed(2)}`;
-            pnlEl.classList.toggle('text-green-400', status.today_pnl >= 0);
-            pnlEl.classList.toggle('text-red-400', status.today_pnl < 0);
+            const paperPnl = status.paper_portfolio ? status.paper_portfolio.total_pnl : null;
+            const pnlValue = paperPnl !== null ? paperPnl : status.today_pnl;
+            pnlEl.innerText = `$${pnlValue.toFixed(2)}`;
+            pnlEl.classList.toggle('text-green-400', pnlValue >= 0);
+            pnlEl.classList.toggle('text-red-400', pnlValue < 0);
         }
 
         // Update Strategies List
         const strategies = await api.getStrategies();
         renderStrategies(strategies);
+
+        // Update recent actions panel
+        const history = await api.getRecentActions();
+        renderRecentActions(history);
 
         // Update 3D Scene
         updateStrategiesInScene(strategies);
@@ -92,6 +104,41 @@ async function updateStatus() {
 
 // Store strategies data for modal access
 let currentStrategies = [];
+
+function renderRecentActions(history) {
+    const container = document.getElementById('recent-actions');
+    if (!container) return;
+
+    if (!history || history.length === 0) {
+        container.innerHTML = '<div class="text-cyan-700 text-center mt-10">No dry-run actions yet.</div>';
+        return;
+    }
+
+    container.innerHTML = history.slice(0, 10).map(item => {
+        const ts = item.executed_at ? new Date(item.executed_at * 1000) : null;
+        const timeText = ts ? ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+        const pnl = Number(item.profit_loss || 0);
+        const pnlClass = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-cyan-300';
+        const title = item.title || item.strategy || 'Action';
+        const strategy = item.strategy || 'unknown';
+        const dryRun = item.details && item.details.dry_run ? 'DRY RUN' : 'EVENT';
+
+        return `
+            <div class="p-3 rounded border border-cyan-500/10 bg-cyan-950/20 hover:bg-cyan-900/30 transition-colors">
+                <div class="flex justify-between items-start gap-3">
+                    <div class="min-w-0 flex-1">
+                        <div class="text-cyan-300 font-bold truncate">${title}</div>
+                        <div class="text-[11px] text-cyan-600 uppercase tracking-wider mt-1">${strategy} • ${dryRun}</div>
+                    </div>
+                    <div class="text-right shrink-0">
+                        <div class="text-xs font-mono ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>
+                        <div class="text-[10px] text-cyan-700 mt-1">${timeText}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
 
 function renderStrategies(strategies) {
     const list = document.getElementById('strategy-list');
@@ -289,7 +336,8 @@ async function handleChatSubmit(e) {
         '版本', '回滚', '迭代', '改进', '修改',
         'strategy', 'create', 'generate', 'optimize', 'enable',
         'disable', 'delete', 'list', 'template', '模板',
-        'version', 'rollback', 'iterate', 'improve'
+        'version', 'rollback', 'iterate', 'improve',
+        'analyze', 'analysis', 'recommend', 'recommendation', 'review'
     ];
 
     const isStrategyMessage = strategyKeywords.some(kw =>
@@ -297,6 +345,14 @@ async function handleChatSubmit(e) {
     );
 
     if (isStrategyMessage) {
+        const analysisKeywords = ['analyze', 'analysis', 'recommend', 'recommendation', 'review'];
+        const isAnalysisMessage = analysisKeywords.some(kw => msg.toLowerCase().includes(kw));
+
+        if (isAnalysisMessage) {
+            await handleStrategyAnalysis(msg);
+            return;
+        }
+
         await handleStrategyMessage(msg);
         return;
     }
@@ -319,6 +375,70 @@ async function handleChatSubmit(e) {
 
     } catch (e) {
         addChatMessage('SYSTEM', 'Error communicating with core.', 'error');
+    }
+}
+
+async function handleStrategyAnalysis(msg) {
+    try {
+        const normalized = msg.toLowerCase();
+        let strategyName = null;
+
+        const strategyCandidates = [
+            'crypto_dca',
+            'crypto_funding',
+            'crypto_price_alert',
+            'smart_rebalance',
+            'stock_dividend',
+            'appl_trading_strategy',
+            'gold_trading_strategy'
+        ];
+
+        for (const candidate of strategyCandidates) {
+            if (normalized.includes(candidate.toLowerCase())) {
+                strategyName = candidate;
+                break;
+            }
+        }
+
+        const thinkingId = addChatMessage('ANALYSIS', strategyName ? `Reviewing ${strategyName}...` : 'Reviewing all strategies...', 'system', true);
+        const data = await api.analyzeStrategies(strategyName);
+        removeChatMessage(thinkingId);
+
+        if (!data.success) {
+            addChatMessage('ANALYSIS', data.error || 'Analysis failed.', 'error');
+            return true;
+        }
+
+        const lines = [];
+        if (data.overview) {
+            lines.push(`Strategy review complete. ${data.overview.high_priority} high, ${data.overview.medium_priority} medium, ${data.overview.low_priority} low priority.`);
+            lines.push('');
+        }
+
+        for (const item of data.analyses || []) {
+            lines.push(`## ${item.strategy_name}`);
+            lines.push(`- Priority: ${String(item.priority).toUpperCase()}`);
+            lines.push(`- Enabled: ${item.enabled ? 'yes' : 'no'}`);
+            lines.push(`- Risk: ${item.risk_level}`);
+            lines.push(`- Executions: ${item.summary.total_executions}, success rate: ${Number(item.summary.success_rate).toFixed(0)}%, avg P&L: ${Number(item.summary.avg_pnl).toFixed(2)}`);
+            lines.push(`- Recommended agents: ${(item.recommended_agents || []).join(', ')}`);
+            lines.push('- Concerns:');
+            for (const concern of item.concerns || []) {
+                lines.push(`  - ${concern}`);
+            }
+            lines.push('- Recommendations:');
+            for (const rec of item.recommendations || []) {
+                lines.push(`  - ${rec}`);
+            }
+            lines.push('');
+        }
+
+        addChatMessage('ANALYSIS', lines.join('\n'), 'system');
+        return true;
+    } catch (e) {
+        console.error('Strategy analysis error:', e);
+        addChatMessage('ANALYSIS', 'Error analyzing strategies.', 'error');
+        return true;
     }
 }
 

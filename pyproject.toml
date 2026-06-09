@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "7x24 AI Agent that saves and makes money autonomously"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.10,<3.11"
 authors = [{ name = "MoneyClaw Contributors" }]
 keywords = ["ai", "agent", "finance", "trading", "savings", "automation"]
 classifiers = [
