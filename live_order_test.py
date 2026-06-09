@@ -57,7 +57,7 @@ async def main() -> None:
         stp = await ex.place_stop_loss("binanceus", SYMBOL, held, stop_price)
         print(f"[4] STOP_LOSS      status={stp.status} id={stp.id} stop={stop_price:.2f}")
         if stp.status not in ("failed", "rejected"):
-            cancelled = await ex.cancel_order("binanceus", stp.id)
+            cancelled = await ex.cancel_order("binanceus", stp.id, SYMBOL)
             print(f"[5] CANCEL STOP    {cancelled}")
             await asyncio.sleep(1.0)
         else:

@@ -460,8 +460,11 @@ class TradeExecutor:
             for o in open_orders
         ]
 
-    async def cancel_order(self, exchange_id: str, order_id: str) -> bool:
-        """Cancel an order."""
+    async def cancel_order(
+        self, exchange_id: str, order_id: str, symbol: str | None = None
+    ) -> bool:
+        """Cancel an order. ``symbol`` is REQUIRED live — Binance/ccxt's cancel_order
+        raises ArgumentsRequired without it."""
         if self._dry_run:
             for o in self._orders:
                 if o.id == order_id and o.status == "open":
@@ -470,10 +473,10 @@ class TradeExecutor:
             return False
         try:
             ex = self._em.get(exchange_id)
-            await ex.cancel_order(order_id)  # type: ignore[union-attr]
+            await ex.cancel_order(order_id, symbol)  # type: ignore[union-attr]
             return True
         except Exception:
-            log.exception("trade.cancel_error", order_id=order_id)
+            log.exception("trade.cancel_error", order_id=order_id, symbol=symbol)
             return False
 
     @property

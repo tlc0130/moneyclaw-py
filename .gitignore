@@ -9,11 +9,16 @@ build/
 
 .env
 .env.local
+.env.safe-live
+.env.windows-backup
+.env.*-live
+.env.*-backup
 data/
 *.db
 *.db-journal
 
 .venv/
+.ven/
 venv/
 .mypy_cache/
 .ruff_cache/

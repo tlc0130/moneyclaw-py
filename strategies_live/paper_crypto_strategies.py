@@ -343,7 +343,9 @@ class CombinedCryptoStrategy(Strategy):
             # Cancel the native stop first so the qty isn't locked / double-sold.
             if pos.stop_order_id:
                 try:
-                    await self._executor.cancel_order(self._exchange_id, pos.stop_order_id)
+                    await self._executor.cancel_order(
+                        self._exchange_id, pos.stop_order_id, symbol
+                    )
                 except Exception:
                     log.warning("combined_strategy.stop_cancel_failed", symbol=symbol)
             order = await self._executor.market_sell(self._exchange_id, symbol, pos.qty)
