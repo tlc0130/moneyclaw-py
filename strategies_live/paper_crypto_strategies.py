@@ -244,6 +244,7 @@ class CombinedCryptoStrategy(Strategy):
                 # Stop fired on the exchange — realized PnL is already in the wallet
                 # (and _refresh_balance picks it up); just stop tracking the position.
                 self._positions.pop(key, None)
+                self._save_state()
                 log.info(
                     "combined_strategy.stopped_out",
                     symbol=pos.symbol,
@@ -358,6 +359,32 @@ class CombinedCryptoStrategy(Strategy):
                     log.warning("combined_strategy.stop_cancel_failed", symbol=symbol)
             order = await self._executor.market_sell(self._exchange_id, symbol, pos.qty)
             if order.status == "failed":
+                # Stop was already cancelled — attempt to re-protect the position so it
+                # isn't left open on the exchange with no protective stop.
+                if self._place_native_stops:
+                    try:
+                        new_stop = await self._executor.place_stop_loss(
+                            self._exchange_id, symbol, pos.qty, pos.hard_stop,
+                            buffer=self._stop_limit_buffer,
+                        )
+                        if new_stop.status != "failed":
+                            pos.stop_order_id = new_stop.id
+                            self._save_state()
+                            log.warning(
+                                "combined_strategy.sell_failed_stop_replaced",
+                                symbol=symbol, hard_stop=pos.hard_stop,
+                            )
+                        else:
+                            pos.stop_order_id = None
+                            self._save_state()
+                            log.error(
+                                "combined_strategy.position_unprotected",
+                                symbol=symbol, hard_stop=pos.hard_stop,
+                            )
+                    except Exception:
+                        pos.stop_order_id = None
+                        self._save_state()
+                        log.exception("combined_strategy.stop_reprotect_failed", symbol=symbol)
                 return Result(success=False, details={"action": action, "symbol": symbol, "reason": "exchange_order_failed"})
         exit_fee = exit_price * pos.qty * self._fee_rate
         gross_pnl = (exit_price - pos.entry) * pos.qty
@@ -396,32 +423,51 @@ class CombinedCryptoStrategy(Strategy):
         return 1.25
 
     def _load_state(self) -> None:
-        """Restore _positions and _processed_actions from the JSON state file."""
+        """Restore _positions, _processed_actions, and tracked balance from disk."""
         if not _STATE_PATH.exists():
             return
         try:
             raw = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            log.exception("combined_strategy.state_read_error", path=str(_STATE_PATH))
+            return
 
-            for key_list, pos_dict in raw.get("positions", []):
+        bad_positions = 0
+        for record in raw.get("positions", []):
+            try:
+                key_list, pos_dict = record
                 pos_dict["entry_time"] = datetime.fromisoformat(pos_dict["entry_time"])
                 key = (str(key_list[0]), str(key_list[1]))
                 self._positions[key] = Position(**pos_dict)
+            except Exception:
+                bad_positions += 1
+                log.warning("combined_strategy.state_bad_position", record=str(record)[:200])
+        if bad_positions:
+            log.error("combined_strategy.state_partial_restore", skipped=bad_positions)
 
-            cutoff_ms = int(time.time() * 1000) - 7 * 86_400_000
-            for entry in raw.get("processed_actions", []):
+        cutoff_ms = int(time.time() * 1000) - 7 * 86_400_000
+        for entry in raw.get("processed_actions", []):
+            try:
                 bar_time_ms, action, symbol, strategy_kind = entry
                 if int(bar_time_ms) >= cutoff_ms:
                     self._processed_actions.add(
                         (int(bar_time_ms), str(action), str(symbol), str(strategy_kind))
                     )
+            except Exception:
+                pass
 
-            log.info(
-                "combined_strategy.state_loaded",
-                positions=len(self._positions),
-                processed_actions=len(self._processed_actions),
-            )
-        except Exception:
-            log.exception("combined_strategy.state_load_error", path=str(_STATE_PATH))
+        if "balance" in raw:
+            try:
+                self._balance = float(raw["balance"])
+            except (TypeError, ValueError):
+                pass
+
+        log.info(
+            "combined_strategy.state_loaded",
+            positions=len(self._positions),
+            processed_actions=len(self._processed_actions),
+            balance=self._balance,
+        )
 
     def _save_state(self) -> None:
         """Atomically persist _positions and _processed_actions to the JSON state file."""
@@ -443,6 +489,7 @@ class CombinedCryptoStrategy(Strategy):
             payload = {
                 "positions": pos_records,
                 "processed_actions": pruned_actions,
+                "balance": self._balance,
             }
             tmp = _STATE_PATH.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
