@@ -13,6 +13,9 @@ common:
   # the daily scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
   place_native_stops: true
   stop_limit_buffer: 0.005
+  # Daily strategy: run the heavy signal computation at most once per this many
+  # seconds (the agent loop ticks far more often). 1800 = every 30 min.
+  scan_min_interval_seconds: 1800
 
 donchian:
   entry_channel: 55

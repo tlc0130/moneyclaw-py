@@ -192,6 +192,14 @@ class CombinedCryptoStrategy(Strategy):
         self._all_symbols = sorted(set(self._donchian_symbols) | set(self._rsi_symbols) | {"BTC/USDT"})
         self._symbol_backoff_until: dict[str, float] = {}
         self._symbol_failures: dict[str, int] = {}
+        # #4: validate configured symbols against the exchange's real markets once,
+        # so we stop repeatedly fetching pairs that don't exist on this exchange.
+        self._symbols_validated = False
+        # #5: this is a DAILY strategy but the agent loop ticks every ~60s. Only run
+        # the (expensive) signal computation at most once per interval; cheap balance
+        # refresh + stop reconciliation still happen every tick.
+        self._scan_min_interval = float(common.get("scan_min_interval_seconds", 1800))
+        self._last_full_scan: float | None = None
 
     async def scan(self) -> list[Opportunity]:
         # Size positions off REAL deployable equity in live mode (not the paper
@@ -201,7 +209,17 @@ class CombinedCryptoStrategy(Strategy):
         # Drop positions the exchange already stopped out, so we don't later try to
         # sell coins we no longer hold.
         await self._reconcile_stops()
+        # #5: throttle the heavy daily-bar computation; balance/reconcile above stay
+        # responsive every tick.
+        if not self._due_for_full_scan():
+            return []
+        self._last_full_scan = time.monotonic()
         return await asyncio.to_thread(self._scan_sync)
+
+    def _due_for_full_scan(self) -> bool:
+        if self._last_full_scan is None:
+            return True
+        return (time.monotonic() - self._last_full_scan) >= self._scan_min_interval
 
     async def _reconcile_stops(self) -> None:
         if self._executor is None or self._executor.dry_run:
@@ -357,8 +375,42 @@ class CombinedCryptoStrategy(Strategy):
     def estimate_roi(self) -> float:
         return 1.25
 
+    def _ensure_symbols_validated(self) -> None:
+        """#4: drop configured symbols that don't exist on the exchange so we don't
+        waste fetches + log noise on phantom pairs. Runs once (sync, in the scan
+        thread); retries on a later scan if the markets call fails."""
+        if self._symbols_validated:
+            return
+        try:
+            markets = self._exchange.load_markets()
+        except Exception:
+            log.warning("combined_strategy.markets_load_failed", exchange=self._exchange_id)
+            return
+        available = set(markets.keys())
+
+        dropped = sorted(s for s in self._all_symbols if s not in available)
+        if dropped:
+            log.warning(
+                "combined_strategy.symbols_unavailable",
+                exchange=self._exchange_id,
+                dropped=dropped,
+            )
+        if "BTC/USDT" not in available:
+            log.error(
+                "combined_strategy.regime_symbol_missing",
+                exchange=self._exchange_id,
+                detail="BTC/USDT absent; BTC regime filter will block all entries",
+            )
+
+        self._donchian_symbols = [s for s in self._donchian_symbols if s in available]
+        self._rsi_symbols = [s for s in self._rsi_symbols if s in available]
+        regime = {"BTC/USDT"} if "BTC/USDT" in available else set()
+        self._all_symbols = sorted(set(self._donchian_symbols) | set(self._rsi_symbols) | regime)
+        self._symbols_validated = True
+
     def _scan_sync(self) -> list[Opportunity]:
         try:
+            self._ensure_symbols_validated()
             symbol_data: dict[str, pd.DataFrame] = {}
             now = time.monotonic()
             for symbol in self._all_symbols:
