@@ -95,8 +95,11 @@ class ExchangeSettings(BaseSettings):
     # US users: keep this "binanceus" — binance.com (ccxt "binance") is geo-blocked in the US.
     default_exchange: str = "binanceus"
     dry_run: bool = True  # Global dry_run override
-    # Hard per-order USD notional cap (defense against mis-sized orders). 0 = disabled.
-    max_order_usd: float = 25.0
+    # Per-order USD notional CIRCUIT-BREAKER against gross mis-sizing (e.g. a USD
+    # amount mistakenly passed as a base quantity). 0 = disabled. Set it ABOVE your
+    # largest expected position notional or it will block legitimate entries; for
+    # "tiny live", control size by funding a small wallet, not by a low cap here.
+    max_order_usd: float = 0.0
     # Per-exchange configs loaded from env: BINANCE_API_KEY, BINANCEUS_API_KEY, etc.
     binance_api_key: str = ""
     binance_secret: str = ""

@@ -217,12 +217,17 @@ class TradeExecutor:
             dry_run=self._dry_run,
         )
 
-        # --- Hard safety cap (USD notional) ---
+        # --- Hard safety cap (USD notional) — BUYS ONLY ---
+        # The cap limits how much we can open (risk). Sells/exits reduce risk and
+        # must never be blocked, or a position could be stranded.
+        cap_applies = (
+            self._max_order_usd is not None and self._max_order_usd > 0 and side == "buy"
+        )
         # Resolve a USD notional. For base-quantity orders with no price (e.g. a
         # market order sized by risk), fetch the live price so the cap still applies.
         notional = cost if cost is not None else (amount * price if (amount and price) else None)
         if (
-            self._max_order_usd is not None
+            cap_applies
             and notional is None
             and amount
             and not self._dry_run
@@ -240,7 +245,7 @@ class TradeExecutor:
                 self._orders.append(order)
                 return order
         if (
-            self._max_order_usd is not None
+            cap_applies
             and notional is not None
             and notional > self._max_order_usd
         ):
@@ -292,6 +297,81 @@ class TradeExecutor:
 
         self._orders.append(order)
         return order
+
+    async def place_stop_loss(
+        self,
+        exchange_id: str,
+        symbol: str,
+        amount: float,
+        stop_price: float,
+        limit_price: float | None = None,
+        buffer: float = 0.005,
+    ) -> Order:
+        """Place a protective STOP-LOSS sell on the exchange (enforced 24/7).
+
+        Uses STOP_LOSS_LIMIT (the order type Binance/Binance.US spot accepts): when
+        the market trades at/through ``stop_price``, a limit sell at ``limit_price``
+        is submitted. ``limit_price`` defaults to just below the stop so it stays
+        marketable during a fast drop. The per-order USD cap does NOT apply here —
+        a stop only reduces existing risk.
+        """
+        order = Order(
+            id=self._next_id(),
+            exchange=exchange_id,
+            symbol=symbol,
+            side="sell",
+            type="stop",
+            amount=amount,
+            price=stop_price,
+            dry_run=self._dry_run,
+        )
+
+        if self._dry_run:
+            order.status = "open"
+            log.info("trade.dry_run_stop", symbol=symbol, stop=stop_price, amount=amount)
+            self._orders.append(order)
+            return order
+
+        ex = self._em.get(exchange_id)
+        try:
+            if limit_price is None:
+                limit_price = stop_price * (1 - buffer)
+            try:
+                amt = float(ex.amount_to_precision(symbol, amount))  # type: ignore[union-attr]
+                stp = float(ex.price_to_precision(symbol, stop_price))  # type: ignore[union-attr]
+                lmt = float(ex.price_to_precision(symbol, limit_price))  # type: ignore[union-attr]
+            except Exception:
+                amt, stp, lmt = amount, stop_price, limit_price
+            result = await ex.create_order(  # type: ignore[union-attr]
+                symbol, "STOP_LOSS_LIMIT", "sell", amt, lmt, {"stopPrice": stp}
+            )
+            order.id = str(result.get("id", order.id))
+            order.status = result.get("status", "open") or "open"
+            order.price = stp
+            log.info("trade.stop_placed", order_id=order.id, symbol=symbol, stop=stp, limit=lmt)
+        except Exception:
+            order.status = "failed"
+            log.exception("trade.stop_error", symbol=symbol, stop=stop_price)
+
+        self._orders.append(order)
+        return order
+
+    async def get_order_status(
+        self, exchange_id: str, order_id: str, symbol: str | None = None
+    ) -> str:
+        """Return an order's status ('open'/'closed'/'canceled'/...) or 'unknown'."""
+        if self._dry_run:
+            for o in self._orders:
+                if o.id == order_id:
+                    return o.status
+            return "unknown"
+        try:
+            ex = self._em.get(exchange_id)
+            result = await ex.fetch_order(order_id, symbol)  # type: ignore[union-attr]
+            return str(result.get("status", "unknown") or "unknown")
+        except Exception:
+            log.warning("trade.fetch_order_error", order_id=order_id, symbol=symbol)
+            return "unknown"
 
     async def get_open_orders(self, exchange_id: str) -> list[Order]:
         """Get open orders — from local list in dry_run, from exchange otherwise."""

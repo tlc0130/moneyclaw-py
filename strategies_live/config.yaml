@@ -9,6 +9,10 @@ common:
   slippage_rate: 0.002
   exchange_id: binanceus
   btc_regime_ema: 200
+  # Place a native exchange stop-loss on every entry (enforced 24/7, not just on
+  # the daily scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
+  place_native_stops: true
+  stop_limit_buffer: 0.005
 
 donchian:
   entry_channel: 55

@@ -126,12 +126,29 @@ class TestExecutorSafetyAndSizing:
         assert order.cost == 10.0
 
     async def test_per_order_usd_cap_blocks_oversized(self) -> None:
-        """Hard safety guard: an order above max_order_usd must not place."""
+        """Hard safety guard: a BUY above max_order_usd must not place."""
         em = ExchangeManager()
         ex = TradeExecutor(em, dry_run=True, default_exchange="binanceus", max_order_usd=25.0)
         order = await ex.market_buy_cost("binanceus", "BTC/USDT", 1000.0)
         assert order.status == "blocked"
         assert order.filled == 0.0
+
+    async def test_cap_never_blocks_a_sell(self) -> None:
+        """Sells/exits reduce risk and must never be blocked by the USD cap."""
+
+        class _FakeSell:
+            async def create_order(self, *a, **k):
+                return {"id": "s1", "filled": a[3] if len(a) > 3 else 0, "status": "closed"}
+
+            async def close(self):
+                pass
+
+        em = ExchangeManager()
+        em._exchanges["binanceus"] = _FakeSell()
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus", max_order_usd=25.0)
+        # Huge sell at an explicit price (notional far above the $25 cap) must still place.
+        order = await ex.limit_sell("binanceus", "BTC/USDT", 1.0, 95000.0)
+        assert order.status != "blocked"
 
 
 class _FakeBalanceExchange:
@@ -150,3 +167,71 @@ class TestAvailableQuoteBalance:
         em._exchanges["binanceus"] = _FakeBalanceExchange()  # inject without network
         free = await em.get_available_quote_balance("binanceus", ("USD", "USDT", "USDC"))
         assert free == pytest.approx(42.5)  # 30 USD + 12.5 USDT; BTC ignored
+
+
+class _FakeStopExchange:
+    """Async ccxt stand-in that records stop orders and reports their status."""
+
+    def __init__(self) -> None:
+        self.orders: list[dict] = []
+        self.next_status = "open"
+
+    def amount_to_precision(self, symbol: str, amount: float) -> str:
+        return f"{amount:.6f}"
+
+    def price_to_precision(self, symbol: str, price: float) -> str:
+        return f"{price:.2f}"
+
+    async def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+        rec = {
+            "id": f"stop_{len(self.orders) + 1}",
+            "type": order_type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "params": params or {},
+            "status": "open",
+        }
+        self.orders.append(rec)
+        return rec
+
+    async def fetch_order(self, order_id, symbol=None):
+        return {"id": order_id, "status": self.next_status}
+
+    async def close(self) -> None:  # pragma: no cover
+        pass
+
+
+class TestStopLoss:
+    async def test_place_stop_loss_dry_run(self) -> None:
+        ex = TradeExecutor(ExchangeManager(), dry_run=True, default_exchange="binanceus")
+        order = await ex.place_stop_loss("binanceus", "BTC/USDT", 0.01, 95000.0)
+        assert order.type == "stop"
+        assert order.side == "sell"
+        assert order.status == "open"
+        assert order.dry_run is True
+
+    async def test_place_stop_loss_live(self) -> None:
+        em = ExchangeManager()
+        fake = _FakeStopExchange()
+        em._exchanges["binanceus"] = fake
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus", max_order_usd=25.0)
+        order = await ex.place_stop_loss("binanceus", "BTC/USDT", 0.01, 95000.0)
+        # A stop reduces risk: the USD cap must NOT block it even though notional > cap.
+        assert order.status == "open"
+        assert order.id == "stop_1"
+        placed = fake.orders[0]
+        assert placed["type"] == "STOP_LOSS_LIMIT"
+        assert placed["side"] == "sell"
+        assert placed["params"]["stopPrice"] == pytest.approx(95000.0, rel=1e-4)
+        # limit price sits below the stop so it stays marketable on a fast drop
+        assert placed["price"] < placed["params"]["stopPrice"]
+
+    async def test_get_order_status_live(self) -> None:
+        em = ExchangeManager()
+        fake = _FakeStopExchange()
+        fake.next_status = "closed"
+        em._exchanges["binanceus"] = fake
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus")
+        status = await ex.get_order_status("binanceus", "stop_1", "BTC/USDT")
+        assert status == "closed"

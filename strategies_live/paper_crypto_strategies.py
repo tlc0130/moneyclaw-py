@@ -31,6 +31,7 @@ class Position:
     hard_stop: float
     entry_time: datetime
     entry_fee: float
+    stop_order_id: str | None = None  # native exchange stop-loss order, if placed
 
 
 def _load_config() -> dict[str, Any]:
@@ -163,6 +164,11 @@ class CombinedCryptoStrategy(Strategy):
         self._fee_rate = float(common.get("fee_rate", 0.001))
         self._slippage_rate = float(common.get("slippage_rate", 0.002))
         self._btc_regime_ema = int(common.get("btc_regime_ema", 200))
+        # Place a native exchange stop-loss on entry so the stop is enforced 24/7
+        # (not just on the daily scan). Buffer = how far below the stop the protective
+        # limit sits so it stays marketable on a fast drop.
+        self._place_native_stops = bool(common.get("place_native_stops", True))
+        self._stop_limit_buffer = float(common.get("stop_limit_buffer", 0.005))
 
         self._donchian_entry_channel = int(donchian.get("entry_channel", 55))
         self._donchian_exit_channel = int(donchian.get("exit_channel", 20))
@@ -192,7 +198,33 @@ class CombinedCryptoStrategy(Strategy):
         # start_balance). _entry_risk_budget() = self._balance * risk_per_trade, so
         # refreshing self._balance here scales every entry to the actual wallet.
         await self._refresh_balance()
+        # Drop positions the exchange already stopped out, so we don't later try to
+        # sell coins we no longer hold.
+        await self._reconcile_stops()
         return await asyncio.to_thread(self._scan_sync)
+
+    async def _reconcile_stops(self) -> None:
+        if self._executor is None or self._executor.dry_run:
+            return
+        for key, pos in list(self._positions.items()):
+            if not pos.stop_order_id:
+                continue
+            try:
+                status = await self._executor.get_order_status(
+                    self._exchange_id, pos.stop_order_id, pos.symbol
+                )
+            except Exception:
+                continue
+            if status in ("closed", "filled"):
+                # Stop fired on the exchange — realized PnL is already in the wallet
+                # (and _refresh_balance picks it up); just stop tracking the position.
+                self._positions.pop(key, None)
+                log.info(
+                    "combined_strategy.stopped_out",
+                    symbol=pos.symbol,
+                    strategy=pos.strategy,
+                    hard_stop=pos.hard_stop,
+                )
 
     async def _refresh_balance(self) -> None:
         """In live mode, set self._balance to free quote balance on the exchange.
@@ -228,10 +260,31 @@ class CombinedCryptoStrategy(Strategy):
             entry = float(opp.data["entry"])
             hard_stop = float(opp.data["hard_stop"])
             entry_fee = entry * qty * self._fee_rate
+            stop_order_id: str | None = None
+            stop_protected = False
             if self._executor:
                 order = await self._executor.market_buy(self._exchange_id, symbol, qty)
-                if order.status == "failed":
-                    return Result(success=False, details={"action": action, "symbol": symbol, "reason": "exchange_order_failed"})
+                if order.status in ("failed", "blocked"):
+                    return Result(
+                        success=False,
+                        details={
+                            "action": action,
+                            "symbol": symbol,
+                            "reason": f"exchange_order_{order.status}",
+                        },
+                    )
+                # Place the protective stop immediately after the fill.
+                if self._place_native_stops:
+                    stop = await self._executor.place_stop_loss(
+                        self._exchange_id, symbol, qty, hard_stop, buffer=self._stop_limit_buffer
+                    )
+                    if stop.status == "failed":
+                        log.warning(
+                            "combined_strategy.stop_unprotected", symbol=symbol, hard_stop=hard_stop
+                        )
+                    else:
+                        stop_order_id = stop.id
+                        stop_protected = True
             self._balance -= entry_fee
             self._positions[key] = Position(
                 symbol=symbol,
@@ -241,6 +294,7 @@ class CombinedCryptoStrategy(Strategy):
                 hard_stop=hard_stop,
                 entry_time=datetime.fromisoformat(str(opp.data["bar_time_iso"])),
                 entry_fee=entry_fee,
+                stop_order_id=stop_order_id,
             )
             self._processed_actions.add((bar_time, action, symbol, strategy_kind))
             return Result(
@@ -253,6 +307,7 @@ class CombinedCryptoStrategy(Strategy):
                     "qty": qty,
                     "entry": entry,
                     "hard_stop": hard_stop,
+                    "stop_protected": stop_protected,
                     "tracked_balance": self._balance,
                 },
             )
@@ -263,6 +318,12 @@ class CombinedCryptoStrategy(Strategy):
 
         exit_price = float(opp.data["exit"])
         if self._executor:
+            # Cancel the native stop first so the qty isn't locked / double-sold.
+            if pos.stop_order_id:
+                try:
+                    await self._executor.cancel_order(self._exchange_id, pos.stop_order_id)
+                except Exception:
+                    log.warning("combined_strategy.stop_cancel_failed", symbol=symbol)
             order = await self._executor.market_sell(self._exchange_id, symbol, pos.qty)
             if order.status == "failed":
                 return Result(success=False, details={"action": action, "symbol": symbol, "reason": "exchange_order_failed"})
