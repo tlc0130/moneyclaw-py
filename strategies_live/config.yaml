@@ -1,3 +1,22 @@
+# ── Tuner bounds ──────────────────────────────────────────────────────────────
+# The StrategyTuner can only adjust parameters within these ranges.
+# Values here may be tighter than the hard-coded absolute limits in
+# strategy_tuner.py but never looser.
+tuner:
+  min_change_interval_hours: 24   # don't tune more than once per day
+  min_trades_for_tuning: 0        # tune even with zero trades (signal-gap analysis)
+  bounds:
+    rsi2.entry:               [5,   20]
+    rsi2.exit:                [60,  85]
+    rsi2.atr_stop_mult:       [1.5,  4.0]
+    rsi2.time_stop_days:      [7,   14]
+    donchian.entry_channel:   [20,  80]
+    donchian.exit_channel:    [5,   30]
+    donchian.atr_stop_mult:   [1.5,  3.0]
+    common.risk_per_trade:    [0.005, 0.025]
+    common.max_open_positions: [2,  6]
+
+# ── Strategy parameters ────────────────────────────────────────────────────────
 common:
   timeframe: 1d
   lookback: 1500

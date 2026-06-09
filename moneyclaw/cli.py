@@ -18,13 +18,31 @@ _LOG_LEVELS = {
 }
 
 
+from moneyclaw.agent.log_analyzer import LogBuffer, LogAnalyzer
+
+# Module-level so the tuner and any other component can import it directly.
+log_buffer = LogBuffer()
+log_analyzer = LogAnalyzer(log_buffer)
+
+
 @click.group()
 @click.option("--log-level", default="INFO", help="Log level (DEBUG, INFO, WARNING, ERROR)")
 def main(log_level: str) -> None:
     """MoneyClaw — 7x24 AI Agent that saves and makes money."""
     level = _LOG_LEVELS.get(log_level.upper(), logging.INFO)
     structlog.configure(
+        processors=[
+            log_buffer,                                         # capture events in ring buffer
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.dev.ConsoleRenderer(),
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
     )
 
 
@@ -276,6 +294,27 @@ async def _run(web: bool, telegram: bool) -> None:
         )
         await strategies.register(instance)
 
+    # Strategy tuner — daily LLM-driven parameter optimizer
+    from pathlib import Path as _Path2
+
+    from moneyclaw.agent.strategy_tuner import StrategyTuner
+
+    _tuner_config = _Path2(__file__).parent.parent / "strategies_live" / "config.yaml"
+    tuner = StrategyTuner(
+        config_path=_tuner_config,
+        log_analyzer=log_analyzer,
+        memory=memory,
+        llm=llm,
+        notifier=notifier,
+        strategies=strategies,
+        min_change_interval_hours=settings.tuner.min_change_interval_hours
+        if hasattr(settings, "tuner")
+        else 24.0,
+        min_trades_for_tuning=settings.tuner.min_trades_for_tuning
+        if hasattr(settings, "tuner")
+        else 0,
+    )
+
     # --- Schedule jobs ---
     from moneyclaw.scheduler.jobs import register_all_jobs
 
@@ -288,6 +327,7 @@ async def _run(web: bool, telegram: bool) -> None:
         crypto_feed=crypto_feed,
         storage=storage,
         settings=settings,
+        tuner=tuner,
     )
 
     # Build tasks list

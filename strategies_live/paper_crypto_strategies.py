@@ -206,6 +206,9 @@ class CombinedCryptoStrategy(Strategy):
         # refresh + stop reconciliation still happen every tick.
         self._scan_min_interval = float(common.get("scan_min_interval_seconds", 1800))
         self._last_full_scan: float | None = None
+        # Track config file mtime so _check_reload_config() can hot-apply
+        # changes written by the StrategyTuner without restarting the bot.
+        self._config_mtime: float = 0.0
         self._load_state()
 
     async def scan(self) -> list[Opportunity]:
@@ -421,6 +424,43 @@ class CombinedCryptoStrategy(Strategy):
 
     def estimate_roi(self) -> float:
         return 1.25
+
+    def reload_config(self) -> None:
+        """Hot-reload tunable parameters from config.yaml.
+
+        Called by the StrategyTuner after writing new config values.
+        Preserves all runtime state (_positions, _balance, _processed_actions,
+        _last_full_scan).  Runs synchronously — callers in async context should
+        wrap in asyncio.to_thread if needed, but the operation is fast (one YAML
+        read + a handful of assignments) so blocking the event loop briefly is
+        acceptable here.
+        """
+        cfg = _load_config()
+        common = cfg.get("common", {})
+        donchian = cfg.get("donchian", {})
+        rsi2 = cfg.get("rsi2", {})
+
+        self._risk_per_trade = float(common.get("risk_per_trade", self._risk_per_trade))
+        self._max_open_positions = int(common.get("max_open_positions", self._max_open_positions))
+        self._max_portfolio_risk = float(common.get("max_portfolio_risk", self._max_portfolio_risk))
+        self._scan_min_interval = float(common.get("scan_min_interval_seconds", self._scan_min_interval))
+
+        self._donchian_entry_channel = int(donchian.get("entry_channel", self._donchian_entry_channel))
+        self._donchian_exit_channel = int(donchian.get("exit_channel", self._donchian_exit_channel))
+        self._donchian_atr_stop_mult = float(donchian.get("atr_stop_mult", self._donchian_atr_stop_mult))
+
+        self._rsi_entry = float(rsi2.get("entry", self._rsi_entry))
+        self._rsi_exit = float(rsi2.get("exit", self._rsi_exit))
+        self._time_stop_days = int(rsi2.get("time_stop_days", self._time_stop_days))
+        self._rsi_atr_stop_mult = float(rsi2.get("atr_stop_mult", self._rsi_atr_stop_mult))
+
+        log.info(
+            "combined_strategy.config_reloaded",
+            risk_per_trade=self._risk_per_trade,
+            max_open_positions=self._max_open_positions,
+            donchian_entry=self._donchian_entry_channel,
+            rsi_entry=self._rsi_entry,
+        )
 
     def _load_state(self) -> None:
         """Restore _positions, _processed_actions, and tracked balance from disk."""
