@@ -65,7 +65,9 @@ def _rsi(series: pd.Series, period: int) -> pd.Series:
     loss = -delta.clip(upper=0)
     avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    # Use NaN (float) not pd.NA (object) so the series stays float64 and fillna
+    # doesn't emit the pandas downcasting FutureWarning.
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(100)
 

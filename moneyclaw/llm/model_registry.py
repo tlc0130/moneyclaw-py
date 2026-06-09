@@ -14,7 +14,7 @@ from moneyclaw.llm.model_profile import CostTier, ModelProfile, TaskType
 log = structlog.get_logger()
 
 
-async def _check_model_health(model: ModelProfile, timeout: float = 5.0) -> bool:
+async def _check_model_health(model: ModelProfile, timeout: float = 15.0) -> bool:
     """检查单个模型的健康状态.
 
     通过尝试调用模型的 is_available() 方法来验证配置是否有效。
@@ -167,6 +167,21 @@ class SmartModelRegistry:
                     "registry.health_check_unhealthy_full",
                     details=unhealthy_details,
                 )
+
+        # If discovery found models but EVERY one failed the probe, the health check
+        # itself is almost certainly the problem (cold-start latency, a transient
+        # network blip, or a probe quirk) rather than all providers being down at
+        # once. Don't disable the whole LLM layer over a flaky probe — trust
+        # discovery and keep the models; real call failures are handled at runtime.
+        if not healthy_models and models:
+            log.warning(
+                "registry.health_check_all_failed_keeping_discovered",
+                models=len(models),
+                hint="health probe failed for all models; trusting discovery instead",
+            )
+            return [
+                ModelProfile(**{**m.__dict__, "is_available": True}) for m in models
+            ]
 
         return healthy_models
 

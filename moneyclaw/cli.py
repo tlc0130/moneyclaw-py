@@ -340,11 +340,31 @@ async def _run(web: bool, telegram: bool) -> None:
     if web:
         click.echo(f"Dashboard: http://{settings.web_host}:{settings.web_port}")
 
+    # Graceful shutdown on SIGTERM/SIGINT (systemd stop) so we don't hang ~90s
+    # waiting for SIGKILL. A stop signal cancels the long-running tasks, then the
+    # finally block closes resources promptly.
+    import contextlib
+    import signal
+
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, AttributeError):
+            pass  # not supported on Windows
+
+    gather_task = asyncio.gather(*tasks)
+    stop_waiter = asyncio.ensure_future(stop_event.wait())
     try:
-        await asyncio.gather(*tasks)
-    except KeyboardInterrupt:
-        await brain.stop()
+        await asyncio.wait({gather_task, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
     finally:
+        stop_waiter.cancel()
+        with contextlib.suppress(Exception):
+            await brain.stop()
+        gather_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await gather_task
         storage.close()
         await memory.close()
         await exchange_mgr.close_all()  # close async ccxt aiohttp sessions
