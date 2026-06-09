@@ -59,8 +59,31 @@ def _summarize_storage_error(error: Exception) -> str:
     return text
 
 
+def _force_ipv4() -> None:
+    """Force all DNS resolution in this process to IPv4.
+
+    Binance.US rejects SIGNED API calls made over IPv6 (error -71012
+    "IPv6 not supported"). Sync clients (requests) honor /etc/gai.conf IPv4
+    preference, but aiohttp (used by ccxt.async_support, the live order/balance
+    path) does not — so we pin getaddrinfo to AF_INET process-wide. Affects only
+    this process, not the host (SSH etc. are untouched).
+    """
+    import socket
+
+    if getattr(socket, "_moneyclaw_ipv4_forced", False):
+        return
+    _orig_getaddrinfo = socket.getaddrinfo
+
+    def _ipv4_only(host, port, family=0, *args, **kwargs):
+        return _orig_getaddrinfo(host, port, socket.AF_INET, *args, **kwargs)
+
+    socket.getaddrinfo = _ipv4_only
+    socket._moneyclaw_ipv4_forced = True
+
+
 async def _run(web: bool, telegram: bool) -> None:
     """Async entry point — wire everything together and start."""
+    _force_ipv4()  # must run before any network call (LLM discovery, exchanges, feeds)
     from moneyclaw.agent.brain import AgentBrain
     from moneyclaw.agent.evaluator import Evaluator
     from moneyclaw.agent.memory import Memory

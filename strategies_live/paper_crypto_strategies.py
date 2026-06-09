@@ -260,8 +260,12 @@ class CombinedCryptoStrategy(Strategy):
                 self._balance = equity
             else:
                 log.warning("combined_strategy.zero_equity", exchange=self._exchange_id)
-        except Exception:
-            log.warning("combined_strategy.balance_refresh_failed", exchange=self._exchange_id)
+        except Exception as e:
+            log.warning(
+                "combined_strategy.balance_refresh_failed",
+                exchange=self._exchange_id,
+                error=str(e)[:200],
+            )
 
     async def evaluate(self, opp: Opportunity) -> Score:
         return Score(value=opp.pre_score or 0.8, threshold=0.4, reasoning=opp.title)
