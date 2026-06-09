@@ -84,7 +84,7 @@ class CryptoDCA(Strategy):
                 self._symbol,
                 float(opp.data["amount_usd"]),
             )
-            success = order.status not in ("failed", "blocked")
+            success = order.status not in ("failed", "blocked", "rejected")
             if success:
                 self._last_buy = datetime.now(timezone.utc)
             return Result(

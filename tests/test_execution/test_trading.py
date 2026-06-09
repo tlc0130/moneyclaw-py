@@ -235,3 +235,76 @@ class TestStopLoss:
         ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus")
         status = await ex.get_order_status("binanceus", "stop_1", "BTC/USDT")
         assert status == "closed"
+
+
+class _FakeMarketExchange:
+    """Async ccxt stand-in with lot-size precision and min limits."""
+
+    def __init__(self, last=100000.0, min_amount=0.0001, min_cost=10.0, step=0.0001):
+        self._last = last
+        self._min_amount = min_amount
+        self._min_cost = min_cost
+        self._step = step
+        self.markets = {"BTC/USDT": {}}
+        self.placed: list[tuple[str, float]] = []
+
+    async def load_markets(self):  # pragma: no cover - markets pre-populated
+        return self.markets
+
+    def market(self, symbol):
+        return {"limits": {"amount": {"min": self._min_amount}, "cost": {"min": self._min_cost}}}
+
+    def amount_to_precision(self, symbol, amount):
+        import math
+
+        return f"{math.floor(amount / self._step) * self._step:.8f}"
+
+    async def fetch_ticker(self, symbol):
+        return {"last": self._last}
+
+    async def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+        self.placed.append((side, amount))
+        return {"id": "m1", "filled": amount, "status": "closed"}
+
+    async def close(self):  # pragma: no cover
+        pass
+
+
+class TestLotSizeNormalization:
+    async def test_market_buy_rounds_to_step(self) -> None:
+        em = ExchangeManager()
+        fake = _FakeMarketExchange(step=0.0001)
+        em._exchanges["binanceus"] = fake
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus")
+        order = await ex.market_buy("binanceus", "BTC/USDT", 0.0013372)
+        assert order.status == "closed"
+        assert fake.placed[0][1] == pytest.approx(0.0013)  # floored to step
+
+    async def test_market_buy_below_min_qty_rejected(self) -> None:
+        em = ExchangeManager()
+        fake = _FakeMarketExchange(min_amount=0.001, step=0.0001)
+        em._exchanges["binanceus"] = fake
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus")
+        order = await ex.market_buy("binanceus", "BTC/USDT", 0.0002)  # < minQty 0.001
+        assert order.status == "rejected"
+        assert fake.placed == []  # never sent to the exchange
+
+    async def test_market_buy_below_min_notional_rejected(self) -> None:
+        em = ExchangeManager()
+        # step 1e-5 so qty passes minQty, but $8 notional < $10 min cost
+        fake = _FakeMarketExchange(last=100000.0, min_amount=1e-5, min_cost=10.0, step=1e-5)
+        em._exchanges["binanceus"] = fake
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus")
+        order = await ex.market_buy("binanceus", "BTC/USDT", 0.00008)  # $8
+        assert order.status == "rejected"
+        assert fake.placed == []
+
+    async def test_market_sell_rounds_but_never_rejected(self) -> None:
+        em = ExchangeManager()
+        fake = _FakeMarketExchange(min_amount=0.001, step=0.0001)
+        em._exchanges["binanceus"] = fake
+        ex = TradeExecutor(em, dry_run=False, default_exchange="binanceus")
+        # Tiny sell below minQty still attempts (exiting must not be blocked here)
+        order = await ex.market_sell("binanceus", "BTC/USDT", 0.0123456)
+        assert order.status != "rejected"
+        assert fake.placed[0][1] == pytest.approx(0.0123)

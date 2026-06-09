@@ -23,7 +23,7 @@ class Order:
     price: float | None = None
     cost: float | None = None  # quote-denominated spend (for market buys by USD cost)
     filled: float = 0.0
-    status: str = "open"  # open, closed, canceled, failed, blocked
+    status: str = "open"  # open, closed, canceled, failed, blocked, rejected
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     dry_run: bool = False
 
@@ -195,6 +195,52 @@ class TradeExecutor:
         """Place a limit sell order (or simulate)."""
         return await self._place("sell", "limit", exchange_id, symbol, amount, price)
 
+    async def _normalize_amount(
+        self,
+        ex: object,
+        symbol: str,
+        amount: float,
+        price: float | None,
+        reject_if_small: bool,
+    ) -> tuple[float, bool, str]:
+        """Round ``amount`` to the exchange lot size; for buys, reject below the
+        market's min quantity / min notional. Returns (amount, ok, reason)."""
+        try:
+            if not getattr(ex, "markets", None):
+                await ex.load_markets()  # type: ignore[union-attr]
+        except Exception:
+            pass
+        try:
+            amount = float(ex.amount_to_precision(symbol, amount))  # type: ignore[union-attr]
+        except Exception:
+            pass  # precision unavailable — let the exchange enforce it
+
+        if not reject_if_small:
+            return amount, True, ""
+
+        try:
+            limits = ex.market(symbol).get("limits", {})  # type: ignore[union-attr]
+        except Exception:
+            return amount, True, ""  # can't validate locally; let the exchange decide
+
+        min_amt = (limits.get("amount") or {}).get("min")
+        if min_amt is not None and amount < float(min_amt):
+            return amount, False, f"amount {amount} < minQty {min_amt}"
+
+        min_cost = (limits.get("cost") or {}).get("min")
+        if min_cost is not None:
+            ref = price
+            if ref is None:
+                try:
+                    ticker = await ex.fetch_ticker(symbol)  # type: ignore[union-attr]
+                    ref = ticker.get("last") or ticker.get("close")
+                except Exception:
+                    ref = None
+            if ref and amount * float(ref) < float(min_cost):
+                return amount, False, f"notional {amount * float(ref):.2f} < minNotional {min_cost}"
+
+        return amount, True, ""
+
     async def _place(
         self,
         side: str,
@@ -283,10 +329,30 @@ class TradeExecutor:
                         result = await ex.create_order(  # type: ignore[union-attr]
                             symbol, "market", side, cost, None, {"quoteOrderQty": cost}
                         )
-                elif order_type == "market":
-                    result = await ex.create_order(symbol, "market", side, amount)  # type: ignore[union-attr]
+                elif amount is not None:
+                    # Round to the exchange's lot size; reject sub-minimum BUYS early
+                    # (a doomed order otherwise comes back as an opaque "failed").
+                    amount, ok, reason = await self._normalize_amount(
+                        ex, symbol, amount, price, reject_if_small=(side == "buy")
+                    )
+                    order.amount = amount
+                    if not ok:
+                        order.status = "rejected"
+                        log.warning(
+                            "trade.rejected_min",
+                            symbol=symbol,
+                            side=side,
+                            amount=amount,
+                            reason=reason,
+                        )
+                        self._orders.append(order)
+                        return order
+                    if order_type == "market":
+                        result = await ex.create_order(symbol, "market", side, amount)  # type: ignore[union-attr]
+                    else:
+                        result = await ex.create_order(symbol, "limit", side, amount, price)  # type: ignore[union-attr]
                 else:
-                    result = await ex.create_order(symbol, "limit", side, amount, price)  # type: ignore[union-attr]
+                    result = await ex.create_order(symbol, order_type, side, amount, price)  # type: ignore[union-attr]
                 order.id = str(result.get("id", order.id))
                 order.filled = float(result.get("filled", 0) or 0)
                 order.status = result.get("status", "open") or "open"

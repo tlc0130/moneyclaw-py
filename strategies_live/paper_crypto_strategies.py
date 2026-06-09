@@ -264,7 +264,7 @@ class CombinedCryptoStrategy(Strategy):
             stop_protected = False
             if self._executor:
                 order = await self._executor.market_buy(self._exchange_id, symbol, qty)
-                if order.status in ("failed", "blocked"):
+                if order.status in ("failed", "blocked", "rejected"):
                     return Result(
                         success=False,
                         details={
