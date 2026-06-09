@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import structlog
@@ -70,7 +70,7 @@ class Notifier:
 
     async def daily_report(self, report: str) -> None:
         """Send the daily summary report."""
-        now = datetime.now(UTC).strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         await self.send(f"DAILY REPORT ({now})\n\n{report}")
 
     async def alert(self, title: str, message: str) -> None:

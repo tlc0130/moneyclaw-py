@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone  # noqa: F401  (timezone kept for py3.10 compat)
 from pathlib import Path
 from typing import TYPE_CHECKING
 
