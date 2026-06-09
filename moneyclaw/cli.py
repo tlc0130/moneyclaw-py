@@ -72,12 +72,34 @@ def _force_ipv4() -> None:
 
     if getattr(socket, "_moneyclaw_ipv4_forced", False):
         return
+
+    # 1) Sync clients (requests/httpx/sync-ccxt + aiohttp's ThreadedResolver).
     _orig_getaddrinfo = socket.getaddrinfo
 
     def _ipv4_only(host, port, family=0, *args, **kwargs):
         return _orig_getaddrinfo(host, port, socket.AF_INET, *args, **kwargs)
 
     socket.getaddrinfo = _ipv4_only
+
+    # 2) aiohttp (ccxt.async_support — live order/balance path). When aiodns is
+    #    installed, aiohttp uses c-ares and bypasses socket.getaddrinfo, so also
+    #    force the TCPConnector itself to IPv4 (resolver-agnostic).
+    try:
+        import functools
+
+        import aiohttp
+
+        _orig_conn_init = aiohttp.TCPConnector.__init__
+
+        @functools.wraps(_orig_conn_init)
+        def _ipv4_conn_init(self, *args, **kwargs):
+            kwargs.setdefault("family", socket.AF_INET)
+            return _orig_conn_init(self, *args, **kwargs)
+
+        aiohttp.TCPConnector.__init__ = _ipv4_conn_init
+    except Exception:
+        pass
+
     socket._moneyclaw_ipv4_forced = True
 
 
