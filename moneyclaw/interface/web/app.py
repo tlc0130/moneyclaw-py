@@ -61,7 +61,9 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        return templates.TemplateResponse("index.html", {"request": request})
+        # Starlette's current TemplateResponse signature takes `request` first;
+        # the old (name, {"request": ...}) form misreads the dict as the template name.
+        return templates.TemplateResponse(request, "index.html", {})
 
     # --- API Endpoints (JSON) ---
 
@@ -136,12 +138,18 @@ def create_app(
     @app.post("/api/approve/{opp_id}")
     async def api_approve(opp_id: str) -> dict:
         ok = await memory.approve(opp_id)
-        return {"status": "approved" if ok else "not_found"}
+        return {
+            "status": "approved" if ok else "not_found",
+            "message": f"Approved {opp_id}" if ok else f"Not found: {opp_id}",
+        }
 
     @app.post("/api/reject/{opp_id}")
     async def api_reject(opp_id: str) -> dict:
         ok = await memory.reject(opp_id)
-        return {"status": "rejected" if ok else "not_found"}
+        return {
+            "status": "rejected" if ok else "not_found",
+            "message": f"Rejected {opp_id}" if ok else f"Not found: {opp_id}",
+        }
 
     # --- Chat API ---
 
@@ -402,8 +410,29 @@ def create_app(
             "success": True
         }
 
-    # --- HTMX Partials (Legacy/Fallback) ---
-    # Keeping minimal HTMX partials if needed, or removing them if fully switching to JS.
-    # For now, let's keep the API endpoints clean and assume the JS frontend uses them.
+    # --- HTMX Partials (HTML fragments for progressive enhancement) ---
+
+    @app.get("/htmx/cards", response_class=HTMLResponse)
+    async def htmx_cards() -> str:
+        status = await brain.get_status()
+        running = "Running" if status.get("running") else "Stopped"
+        mode = "DRY RUN" if status.get("dry_run") else "LIVE"
+        pnl = status.get("today_pnl", 0.0)
+        return (
+            f'<div class="card"><h2>{running}</h2>'
+            f"<p>{mode}</p><p>P&amp;L: ${pnl:.2f}</p></div>"
+        )
+
+    @app.get("/htmx/history", response_class=HTMLResponse)
+    async def htmx_history() -> str:
+        history = await memory.get_history()
+        if not history:
+            return "<p>No trades yet</p>"
+        items = "".join(
+            f"<li>{h.get('strategy', '')}: {h.get('title', '')} "
+            f"({'+' if h.get('profit_loss', 0) >= 0 else ''}{h.get('profit_loss', 0):.2f})</li>"
+            for h in history
+        )
+        return f"<ul>{items}</ul>"
 
     return app
