@@ -4,4 +4,4 @@
 coin: bitcoin
 symbol: BTC/USDT
 amount_usd: 10.0
-exchange_id: binance
+exchange_id: binanceus
