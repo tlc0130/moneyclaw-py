@@ -187,6 +187,9 @@ class CombinedCryptoStrategy(Strategy):
         self._trend_ma = int(rsi2.get("trend_ma", 200))
         self._rsi_atr_period = int(rsi2.get("atr_period", 14))
         self._rsi_atr_stop_mult = float(rsi2.get("atr_stop_mult", 2.5))
+        # When False, RSI-2 mean-reversion entries ignore the BTC-200EMA macro
+        # regime (they still require the symbol's own uptrend, close>trend_ma).
+        self._rsi_require_btc_regime = bool(rsi2.get("require_btc_regime", True))
         self._rsi_symbols = list(rsi2.get("symbols", []))
 
         self._positions: dict[tuple[str, str], Position] = {}
@@ -612,7 +615,8 @@ class CombinedCryptoStrategy(Strategy):
                 rsi_oversold = float(rsi2) < self._rsi_entry
                 in_uptrend = float(signal["close"]) > float(trend_ma)
                 capitulation = float(signal["low"]) <= float(low_5d)
-                if not (bullish and rsi_oversold and in_uptrend and capitulation):
+                regime_ok = bullish or not self._rsi_require_btc_regime
+                if not (regime_ok and rsi_oversold and in_uptrend and capitulation):
                     continue
 
                 actual_entry = _apply_entry_slippage(float(signal["close"]), self._slippage_rate)

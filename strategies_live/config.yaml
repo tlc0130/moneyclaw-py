@@ -1,5 +1,6 @@
 common:
-  timeframe: 1d
+  # 4h bars trade far more often than daily (a new bar every 4h instead of once/day).
+  timeframe: 4h
   lookback: 1500
   start_balance: 1000
   risk_per_trade: 0.015
@@ -13,12 +14,12 @@ common:
   # the daily scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
   place_native_stops: true
   stop_limit_buffer: 0.005
-  # Daily strategy: run the heavy signal computation at most once per this many
-  # seconds (the agent loop ticks far more often). 1800 = every 30 min.
-  scan_min_interval_seconds: 1800
+  # Run the heavy signal computation at most once per this many seconds. 900 = 15
+  # min, responsive enough to catch new 4h bars soon after they close.
+  scan_min_interval_seconds: 900
 
 donchian:
-  entry_channel: 55
+  entry_channel: 20  # ~3.3 days of 4h highs (was 55) -> more breakout entries
   exit_channel: 20
   atr_period: 14
   atr_stop_mult: 2.0
@@ -35,7 +36,10 @@ donchian:
 
 rsi2:
   rsi_period: 2
-  entry: 5
+  entry: 15  # RSI(2) < 15 (was 5) -> dip entries fire much more often
+  # Allow mean-reversion dip-buys even when BTC is below its 200EMA (the per-symbol
+  # uptrend filter close>trend_ma still applies). Set true to require BTC bullish.
+  require_btc_regime: false
   exit: 70
   low_confirm_lookback: 5
   time_stop_days: 10
