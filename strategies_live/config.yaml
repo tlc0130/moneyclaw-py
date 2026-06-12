@@ -1,25 +1,48 @@
 common:
-  # 4h bars trade far more often than daily (a new bar every 4h instead of once/day).
+  # 4h bars: a new decision point every 4 hours instead of once a day.
   timeframe: 4h
-  lookback: 1500
+  # 1000 4h bars ~= 166 days — enough for SMA200/EMA200 + warmup in ONE page
+  # fetch per symbol (the old 1500 needed pagination for no signal benefit).
+  lookback: 1000
   start_balance: 1000
   risk_per_trade: 0.015
   max_open_positions: 4
   max_portfolio_risk: 0.06
+  # Hard per-position notional cap (fraction of equity). 0.22 keeps any single
+  # order well below free cash AND below the RiskManager's max_position_ratio
+  # (0.5) — a tight ATR stop can no longer size an order past the wallet.
+  max_notional_fraction: 0.22
+  # Entries sized below this are skipped loudly (Binance.US min order ~= $10).
+  min_notional_usd: 12
   fee_rate: 0.001
   slippage_rate: 0.002
   exchange_id: binanceus
+  regime_symbol: BTC/USDT
   btc_regime_ema: 200
-  # Place a native exchange stop-loss on every entry (enforced 24/7, not just on
-  # the daily scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
+  # Place a native exchange stop-loss on every entry (enforced 24/7, not just
+  # on the scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
   place_native_stops: true
   stop_limit_buffer: 0.005
-  # Run the heavy signal computation at most once per this many seconds. 900 = 15
-  # min, responsive enough to catch new 4h bars soon after they close.
+  # Heavy signal computation at most once per this many seconds.
   scan_min_interval_seconds: 900
+  # A scan that ERRORED retries after this long instead of losing the window.
+  failed_scan_retry_seconds: 180
+  # Skip an entry if the live price has run more than this past the signal
+  # price by execution time (we act up to one scan interval after bar close).
+  entry_requote_tolerance: 0.02
+  # Treat a symbol as a dead market if its newest candle is older than this
+  # many bars (delisted pairs keep returning stale history forever).
+  max_data_staleness_bars: 3
+  # Open positions + processed-bar dedupe survive restarts in this file.
+  state_file: combined_strategy_state.json
 
-donchian:
-  entry_channel: 20  # ~3.3 days of 4h highs (was 55) -> more breakout entries
+# NOTE on symbols: DYDX/USDT and GMX/USDT do not exist on Binance.US and
+# RNDR/USDT is delisted (last candle Aug 2024) — all three removed. INJ/USDT is
+# a young listing (~170 4h bars): it can trade the Donchian and bear legs now
+# and joins the RSI-2 leg automatically once it has SMA200 history.
+
+donchian:  # bull regime only — trend riding on breakouts
+  entry_channel: 20   # ~3.3 days of 4h highs
   exit_channel: 20
   atr_period: 14
   atr_stop_mult: 2.0
@@ -27,33 +50,58 @@ donchian:
     - BTC/USDT
     - ETH/USDT
     - SOL/USDT
-    - INJ/USDT
-    - DYDX/USDT
     - SUI/USDT
-    - RNDR/USDT
     - LINK/USDT
     - AVAX/USDT
+    - NEAR/USDT
+    - FET/USDT
+    - INJ/USDT
 
-rsi2:
+rsi2:  # dip buying in per-symbol uptrends (close > SMA200 on 4h)
   rsi_period: 2
-  entry: 15  # RSI(2) < 15 (was 5) -> dip entries fire much more often
-  # Allow mean-reversion dip-buys even when BTC is below its 200EMA (the per-symbol
-  # uptrend filter close>trend_ma still applies). Set true to require BTC bullish.
+  entry: 15
+  # RSI-2 entries don't require the BTC regime (per-symbol uptrend filter
+  # close > trend_ma still applies). Set true to require BTC bullish too.
   require_btc_regime: false
   exit: 70
   low_confirm_lookback: 5
-  time_stop_days: 10
-  day5_green_check: 5
+  # Bar-based holding clocks (the old day-based clocks silently changed
+  # semantics when the timeframe moved from 1d to 4h): 60 bars = 10 days.
+  time_stop_bars: 60
+  red_cut_bars: 30
   trend_ma: 200
   atr_period: 14
   atr_stop_mult: 2.5
   symbols:
+    - ETH/USDT
     - SOL/USDT
-    - INJ/USDT
-    - DYDX/USDT
-    - GMX/USDT
     - SUI/USDT
-    - RNDR/USDT
-    - FET/USDT
+    - LINK/USDT
     - AVAX/USDT
     - NEAR/USDT
+    - FET/USDT
+    - INJ/USDT
+
+bear:  # bear/neutral regime — reduced-risk oversold bounces (NEW)
+  enabled: true
+  # Deeper dip required than the bull leg (RSI2 < 10 vs < 15) ...
+  rsi_entry: 10
+  # ... taken only while the symbol holds above a FAST EMA (~8 days on 4h),
+  # so we buy stabilizing pullbacks, not falling knives.
+  trend_ema: 50
+  rsi_exit: 65
+  # Half-size risk per trade in bear mode.
+  risk_scale: 0.5
+  atr_period: 14
+  atr_stop_mult: 1.5
+  time_stop_bars: 30   # 5 days — take the bounce or get out
+  red_cut_bars: 18     # 3 days underwater = cut
+  symbols:
+    - BTC/USDT
+    - ETH/USDT
+    - SOL/USDT
+    - SUI/USDT
+    - LINK/USDT
+    - AVAX/USDT
+    - NEAR/USDT
+    - FET/USDT
