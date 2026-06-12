@@ -84,10 +84,12 @@ rsi2:  # dip buying in per-symbol uptrends (close > SMA200 on 4h)
 
 bear:  # bear/neutral regime — reduced-risk oversold bounces (NEW)
   enabled: true
-  # Deeper dip required than the bull leg (RSI2 < 10 vs < 15) ...
-  rsi_entry: 10
-  # ... taken only while the symbol holds above a FAST EMA (~8 days on 4h),
-  # so we buy stabilizing pullbacks, not falling knives.
+  # Deeper dip than the bull leg, loosened 10->13 to trade more in chop.
+  # Backtest (Binance.US 4h): <10 -> 7 signals/37d, <13 -> 10, <15 -> 12.
+  rsi_entry: 13
+  # Taken ONLY while the symbol holds above a FAST EMA (~8 days on 4h), so we buy
+  # stabilizing pullbacks, not falling knives. This filter is the real risk guard
+  # (dropping it explodes signals ~16x) — we loosen the dip depth, not this.
   trend_ema: 50
   rsi_exit: 65
   # Half-size risk per trade in bear mode.
