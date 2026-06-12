@@ -943,6 +943,46 @@ class CombinedCryptoStrategy(Strategy):
 
             self._prune_processed(now_ms)
             self._save_state()
+
+            # One-line scan summary so "why no trades" is answerable from the logs
+            # without a re-run: regime, deployable cash vs the min-order floor, and
+            # each symbol's entry-relevant signal state. Read-only — never affects
+            # the decision above.
+            free_quote = round(
+                sum(
+                    v for k, v in self._free_by_currency.items()
+                    if k in ("USD", "USDT", "USDC")
+                ),
+                2,
+            )
+            sig_state: dict[str, str] = {}
+            for symbol, df in symbol_data.items():
+                if len(df) < 2:
+                    continue
+                s = df.iloc[-2]
+                toks: list[str] = []
+                if "rsi2" in df.columns and pd.notna(s.get("rsi2")):
+                    toks.append(f"rsi2={float(s['rsi2']):.0f}")
+                if "trend_ma" in df.columns and pd.notna(s.get("trend_ma")):
+                    toks.append("up" if float(s["close"]) > float(s["trend_ma"]) else "dn")
+                if "entry_high" in df.columns and pd.notna(s.get("entry_high")):
+                    toks.append("brk" if float(s["high"]) > float(s["entry_high"]) else "nobrk")
+                if toks:
+                    sig_state[symbol] = " ".join(toks)
+            log.info(
+                "combined_strategy.scan_summary",
+                regime="bull" if bullish else "bear",
+                balance=round(self._balance, 2),
+                free_quote=free_quote,
+                min_notional=self._min_notional_usd,
+                open_positions=len(self._positions),
+                new_opportunities=len(opportunities),
+                actions=[
+                    f"{o.data.get('action', '?')}:{o.data.get('symbol', '?')}"
+                    for o in opportunities
+                ],
+                signals=sig_state,
+            )
             return opportunities
         except Exception:
             log.exception("combined_strategy.scan_failed")
