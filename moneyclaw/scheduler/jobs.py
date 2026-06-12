@@ -56,8 +56,7 @@ def register_all_jobs(
     # Daily report at 21:00 UTC (send via Telegram)
     async def daily_report() -> None:
         today_pnl = await memory.today_pnl()
-        history = await memory.get_history(limit=20)
-        trade_count = len(history)
+        trade_count = await memory.today_trade_count()
 
         report_lines = [
             f"P&L: ${today_pnl:+.2f}",

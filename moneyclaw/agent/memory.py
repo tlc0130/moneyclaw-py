@@ -148,6 +148,18 @@ class Memory:
             row = await cursor.fetchone()
             return row[0] if row else 0.0
 
+    async def today_trade_count(self) -> int:
+        """Trades executed *today* (mirrors today_pnl). The daily report used to
+        show len(get_history(limit=20)), an all-time query capped at 20 — so it
+        read "20" on any day with >=20 historical trades, even with zero today."""
+        assert self._db
+        today = date.today().isoformat()
+        async with self._db.execute(
+            "SELECT trade_count FROM daily_pnl WHERE date = ?", (today,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def pending_count(self) -> int:
         assert self._db
         async with self._db.execute(
