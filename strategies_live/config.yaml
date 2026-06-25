@@ -7,11 +7,11 @@ tuner:
   min_trades_for_tuning: 0        # tune even with zero trades (signal-gap analysis)
   bounds:
     rsi2.entry:               [5,   20]
-    rsi2.exit:                [60,  85]
+    rsi2.exit:                [55,  85]
     rsi2.atr_stop_mult:       [1.5,  4.0]
     rsi2.time_stop_days:      [7,   14]
-    donchian.entry_channel:   [20,  80]
-    donchian.exit_channel:    [5,   30]
+    donchian.entry_channel:   [20,  60]
+    donchian.exit_channel:    [5,   25]
     donchian.atr_stop_mult:   [1.5,  3.0]
     common.risk_per_trade:    [0.005, 0.025]
     common.max_open_positions: [2,  6]
@@ -28,6 +28,14 @@ common:
   slippage_rate: 0.002
   exchange_id: binanceus
   btc_regime_ema: 200
+  # BTC regime filter — set false to allow entries regardless of BTC trend.
+  # btc_regime_tolerance_pct: allow entries if BTC is within this % below the EWM.
+  # 0.03 = entries allowed when BTC is up to 3% below its 200-day EWM.
+  btc_regime_filter: true
+  btc_regime_tolerance_pct: 0.03
+  # Hard cap on risk budget per trade in USD (0 = no cap).
+  # Prevents oversized orders when balance fetch returns stale/high fallback value.
+  max_trade_usd: 20.0
   # Place a native exchange stop-loss on every entry (enforced 24/7, not just on
   # the daily scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
   place_native_stops: true
@@ -37,8 +45,8 @@ common:
   scan_min_interval_seconds: 1800
 
 donchian:
-  entry_channel: 55
-  exit_channel: 20
+  entry_channel: 40
+  exit_channel: 15
   atr_period: 14
   atr_stop_mult: 2.0
   symbols:
@@ -54,9 +62,10 @@ donchian:
 
 rsi2:
   rsi_period: 2
-  entry: 10
-  exit: 70
+  entry: 15
+  exit: 65
   low_confirm_lookback: 5
+  require_capitulation: false
   time_stop_days: 10
   day5_green_check: 5
   trend_ma: 200

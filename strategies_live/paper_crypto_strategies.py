@@ -170,6 +170,9 @@ class CombinedCryptoStrategy(Strategy):
         self._fee_rate = float(common.get("fee_rate", 0.001))
         self._slippage_rate = float(common.get("slippage_rate", 0.002))
         self._btc_regime_ema = int(common.get("btc_regime_ema", 200))
+        self._btc_regime_filter = bool(common.get("btc_regime_filter", True))
+        self._btc_regime_tolerance = float(common.get("btc_regime_tolerance_pct", 0.0))
+        self._max_trade_usd = float(common.get("max_trade_usd", 0.0))  # 0 = no cap
         # Place a native exchange stop-loss on entry so the stop is enforced 24/7
         # (not just on the daily scan). Buffer = how far below the stop the protective
         # limit sits so it stays marketable on a fast drop.
@@ -186,6 +189,7 @@ class CombinedCryptoStrategy(Strategy):
         self._rsi_entry = float(rsi2.get("entry", 5))
         self._rsi_exit = float(rsi2.get("exit", 70))
         self._low_confirm_lookback = int(rsi2.get("low_confirm_lookback", 5))
+        self._rsi_require_capitulation = bool(rsi2.get("require_capitulation", True))
         self._time_stop_days = int(rsi2.get("time_stop_days", 10))
         self._day5_green_check = int(rsi2.get("day5_green_check", 5))
         self._trend_ma = int(rsi2.get("trend_ma", 200))
@@ -224,6 +228,12 @@ class CombinedCryptoStrategy(Strategy):
         if not self._due_for_full_scan():
             return []
         self._last_full_scan = time.monotonic()
+        log.info(
+            "combined_strategy.scan_start",
+            balance=round(self._balance, 2),
+            open_positions=len(self._positions),
+            max_open=self._max_open_positions,
+        )
         return await asyncio.to_thread(self._scan_sync)
 
     def _due_for_full_scan(self) -> bool:
@@ -444,6 +454,9 @@ class CombinedCryptoStrategy(Strategy):
         self._max_open_positions = int(common.get("max_open_positions", self._max_open_positions))
         self._max_portfolio_risk = float(common.get("max_portfolio_risk", self._max_portfolio_risk))
         self._scan_min_interval = float(common.get("scan_min_interval_seconds", self._scan_min_interval))
+        self._btc_regime_filter = bool(common.get("btc_regime_filter", self._btc_regime_filter))
+        self._btc_regime_tolerance = float(common.get("btc_regime_tolerance_pct", self._btc_regime_tolerance))
+        self._max_trade_usd = float(common.get("max_trade_usd", self._max_trade_usd))
 
         self._donchian_entry_channel = int(donchian.get("entry_channel", self._donchian_entry_channel))
         self._donchian_exit_channel = int(donchian.get("exit_channel", self._donchian_exit_channel))
@@ -453,6 +466,7 @@ class CombinedCryptoStrategy(Strategy):
         self._rsi_exit = float(rsi2.get("exit", self._rsi_exit))
         self._time_stop_days = int(rsi2.get("time_stop_days", self._time_stop_days))
         self._rsi_atr_stop_mult = float(rsi2.get("atr_stop_mult", self._rsi_atr_stop_mult))
+        self._rsi_require_capitulation = bool(rsi2.get("require_capitulation", self._rsi_require_capitulation))
 
         log.info(
             "combined_strategy.config_reloaded",
@@ -615,7 +629,20 @@ class CombinedCryptoStrategy(Strategy):
             if btc_df is None or len(btc_df) < self._btc_regime_ema + 2:
                 return []
             btc_ema = btc_df["close"].ewm(span=self._btc_regime_ema, adjust=False).mean().iloc[-2]
-            bullish = bool(btc_df.iloc[-2]["close"] > btc_ema)
+            if not self._btc_regime_filter:
+                bullish = True
+            else:
+                btc_close = float(btc_df.iloc[-2]["close"])
+                tolerance_floor = float(btc_ema) * (1.0 - self._btc_regime_tolerance)
+                bullish = btc_close >= tolerance_floor
+            log.info(
+                "combined_strategy.scan_regime",
+                bullish=bullish,
+                btc_close=round(float(btc_df.iloc[-2]["close"]), 0),
+                btc_ema=round(float(btc_ema), 0),
+                regime_filter=self._btc_regime_filter,
+                tolerance_pct=self._btc_regime_tolerance,
+            )
 
             opportunities: list[Opportunity] = []
 
@@ -768,7 +795,10 @@ class CombinedCryptoStrategy(Strategy):
                 rsi_oversold = float(rsi2) < self._rsi_entry
                 in_uptrend = float(signal["close"]) > float(trend_ma)
                 capitulation = float(signal["low"]) <= float(low_5d)
-                if not (bullish and rsi_oversold and in_uptrend and capitulation):
+                base_ok = bullish and rsi_oversold and in_uptrend
+                if not base_ok:
+                    continue
+                if self._rsi_require_capitulation and not capitulation:
                     continue
 
                 actual_entry = _apply_entry_slippage(float(signal["close"]), self._slippage_rate)
@@ -805,7 +835,10 @@ class CombinedCryptoStrategy(Strategy):
             return []
 
     def _entry_risk_budget(self) -> float:
-        return max(self._balance * self._risk_per_trade, 1.0)
+        budget = self._balance * self._risk_per_trade
+        if self._max_trade_usd > 0:
+            budget = min(budget, self._max_trade_usd)
+        return max(budget, 1.0)
 
     def _current_portfolio_risk(self) -> float:
         balance = max(self._balance, 1.0)
