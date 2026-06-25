@@ -151,13 +151,17 @@ class CombinedCryptoStrategy(Strategy):
     risk_level = "medium"
     min_llm_layer = 0
 
-    def __init__(self, executor: TradeExecutor | None = None) -> None:
+    def __init__(self, executor: TradeExecutor | None = None, notifier: object | None = None) -> None:
         cfg = _load_config()
         common = cfg.get("common", {})
         donchian = cfg.get("donchian", {})
         rsi2 = cfg.get("rsi2", {})
 
         self._executor = executor
+        self._notifier = notifier
+        self._last_entry_ts: float = 0.0
+        self._last_dry_spell_notify: float = 0.0
+        self._dry_spell_notify_hours: int = 24
         self._exchange_id = str(common.get("exchange_id", "binanceus"))
         self._exchange = _exchange(self._exchange_id)
         self._timeframe = str(common.get("timeframe", "1d"))
@@ -228,13 +232,28 @@ class CombinedCryptoStrategy(Strategy):
         if not self._due_for_full_scan():
             return []
         self._last_full_scan = time.monotonic()
+        self._pending_dry_spell: dict | None = None  # cleared/set by _scan_sync
         log.info(
             "combined_strategy.scan_start",
             balance=round(self._balance, 2),
             open_positions=len(self._positions),
             max_open=self._max_open_positions,
         )
-        return await asyncio.to_thread(self._scan_sync)
+        opps = await asyncio.to_thread(self._scan_sync)
+        # Send dry-spell Telegram alert if _scan_sync flagged one.
+        report = getattr(self, "_pending_dry_spell", None)
+        if report and self._notifier:
+            regime = "BULLISH" if report["bullish"] else "BEARISH"
+            since = f"{report['hours_since_entry']:.0f}h" if report["hours_since_entry"] else "startup"
+            try:
+                await self._notifier.send(
+                    f"No new entries in {since}\n"
+                    f"BTC regime: {regime} (${report['btc_close']:,.0f} vs EMA ${report['btc_ema']:,.0f})\n"
+                    f"Open positions: {report['open_positions']}"
+                )
+            except Exception:
+                log.warning("combined_strategy.dry_spell_notify_failed")
+        return opps
 
     def _due_for_full_scan(self) -> bool:
         if self._last_full_scan is None:
@@ -828,6 +847,25 @@ class CombinedCryptoStrategy(Strategy):
                         pre_score=0.8,
                     )
                 )
+
+            # Track last entry time and store dry-spell state for async notifier.
+            entry_opps = [o for o in opportunities if o.data.get("action") == "entry"]
+            if entry_opps:
+                self._last_entry_ts = time.monotonic()
+                self._last_dry_spell_notify = 0.0  # reset so next dry spell notifies promptly
+            else:
+                now = time.monotonic()
+                hours_since_notify = (now - self._last_dry_spell_notify) / 3600
+                if hours_since_notify >= self._dry_spell_notify_hours:
+                    hours_since_entry = (now - self._last_entry_ts) / 3600 if self._last_entry_ts else None
+                    self._pending_dry_spell = {
+                        "bullish": bullish,
+                        "btc_close": round(float(btc_df.iloc[-2]["close"]), 0),
+                        "btc_ema": round(float(btc_ema), 0),
+                        "hours_since_entry": round(hours_since_entry, 1) if hours_since_entry else None,
+                        "open_positions": len(self._positions),
+                    }
+                    self._last_dry_spell_notify = now
 
             return opportunities
         except Exception:

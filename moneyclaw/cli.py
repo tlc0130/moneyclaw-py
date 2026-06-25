@@ -296,6 +296,7 @@ async def _run(web: bool, telegram: bool) -> None:
             stock_feed=stock_feed,
             executor=executor,
             exchange_manager=exchange_mgr,
+            notifier=notifier,
         )
         await strategies.register(instance)
 
@@ -439,7 +440,7 @@ def _resolve_exchange_keys(ex_settings, exchange_id: str) -> tuple[str, str, str
     return ex_settings.binance_api_key, ex_settings.binance_secret, password
 
 
-def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_manager):
+def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_manager, notifier=None):
     """Create a strategy instance, injecting dependencies based on its constructor."""
     name = cls.__name__ if hasattr(cls, "__name__") else str(cls)
 
@@ -458,6 +459,8 @@ def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_ma
             kwargs["executor"] = executor
         elif param_name == "exchange_manager":
             kwargs["exchange_manager"] = exchange_manager
+        elif param_name == "notifier":
+            kwargs["notifier"] = notifier
 
     try:
         return cls(**kwargs)
