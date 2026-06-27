@@ -151,4 +151,4 @@ class Settings(BaseSettings):
 
     # Comma-separated allowlist of strategy names to load. Empty = load all.
     # Example: ENABLED_STRATEGIES=combined_crypto_strategy,crypto_dca
-    enabled_strategies: list[str] = Field(default_factory=list)
+    enabled_strategies: str = ""

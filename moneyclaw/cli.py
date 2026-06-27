@@ -284,7 +284,11 @@ async def _run(web: bool, telegram: bool) -> None:
     _live_dir = _repo_root / "strategies_live"
     if _live_dir.exists() and _live_dir.resolve() != _Path(settings.strategies_dir).resolve():
         strategy_classes = strategy_classes + discover_strategies(_live_dir)
-    _enabled_filter = set(settings.enabled_strategies) if settings.enabled_strategies else None
+    _enabled_filter = (
+        {s.strip() for s in settings.enabled_strategies.split(",") if s.strip()}
+        if settings.enabled_strategies
+        else None
+    )
     for cls in strategy_classes:
         _cls_name = getattr(cls, "name", None) or cls.__name__
         if _enabled_filter and _cls_name not in _enabled_filter:
