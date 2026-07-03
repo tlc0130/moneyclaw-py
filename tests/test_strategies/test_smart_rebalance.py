@@ -98,7 +98,7 @@ class TestSmartRebalanceRefreshHoldings:
             "ETH/USDT": 10.0,
             "USDT": 500.0,
         }
-        em.get_balance.assert_awaited_once_with("binance")
+        em.get_balance.assert_awaited_once_with("binanceus")
 
     async def test_refresh_no_exchange_manager(self) -> None:
         strategy = SmartRebalance(deviation_threshold=0.05)

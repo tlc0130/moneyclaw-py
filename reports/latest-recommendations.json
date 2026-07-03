@@ -1,0 +1,116 @@
+{
+  "generated_at": "2026-05-06T03:11:37.597392+00:00",
+  "target_strategy": "combined_crypto_strategy",
+  "summary": {
+    "dashboard_reachable": true,
+    "market_data_status": "degraded",
+    "observed_historical_strategies": [
+      "stock_dividend",
+      "crypto_dca"
+    ],
+    "recommendation_count": 6
+  },
+  "recommendations": [
+    {
+      "type": "operational_blocker",
+      "priority": "critical",
+      "target": "market_data_feed",
+      "action": "restore fresh quote collection before making strategy adjustments",
+      "reason": "regime detection is currently based on stale quotes",
+      "evidence": {
+        "degraded_symbols": [
+          "bitcoin",
+          "ethereum",
+          "solana"
+        ],
+        "max_staleness_minutes": 2268.0
+      },
+      "expected_effect": "prevents tuning decisions from being driven by outdated market context",
+      "confidence": 0.98,
+      "requires_shadow_test": false
+    },
+    {
+      "type": "runtime_blocker",
+      "priority": "critical",
+      "target": "combined_crypto_strategy",
+      "action": "fix exchange/API connectivity for the live generated strategy before expecting new opportunities or execution history",
+      "reason": "the runtime probe for the live strategy cannot fetch its baseline Binance market data",
+      "evidence": {
+        "strategy_module_path": "C:\\Users\\thump\\.openclaw\\moneyclaw_strategies\\paper_crypto_strategies.py",
+        "probe_symbol": "BTC/USDT",
+        "error_type": "RequestTimeout",
+        "error": "binance GET https://api.binance.com/api/v3/exchangeInfo"
+      },
+      "expected_effect": "restores the strategy's ability to scan, generate opportunities, and populate SQLite history",
+      "confidence": 0.97,
+      "requires_shadow_test": false
+    },
+    {
+      "type": "observability_gap",
+      "priority": "high",
+      "target": "combined_crypto_strategy",
+      "action": "instrument the live generated strategy so executions and result details are tagged under its active strategy name",
+      "reason": "the live strategy appears in CLI output and its source is now resolved, but it still does not appear in historical SQLite stats",
+      "evidence": {
+        "observed_strategies": [
+          "stock_dividend",
+          "crypto_dca"
+        ],
+        "strategy_cli_excerpt": "2026-05-05 22:11:25 [info     ] plugins.discovered             module=strategies.paper_crypto_strategies strategy=combined_crypto_strategy\nFound 1 strategies:\n  combined_crypto_strategy  L0  risk=medium   Combined Donchian trend + RSI-2 mean reversion strategy",
+        "strategy_module_path": "C:\\Users\\thump\\.openclaw\\moneyclaw_strategies\\paper_crypto_strategies.py",
+        "configured_strategies_dir": "C:\\Users\\thump\\.openclaw\\moneyclaw_strategies"
+      },
+      "expected_effect": "enables evidence-based tuning for the actual live strategy instead of older static strategies",
+      "confidence": 0.95,
+      "requires_shadow_test": false
+    },
+    {
+      "type": "risk_control",
+      "priority": "medium",
+      "target": "combined_crypto_strategy",
+      "action": "when feed health returns, consider validating Donchian/trend component first for bitcoin while keeping execution size conservative until data stability is confirmed",
+      "reason": "market regime looks trend-supportive, but stale quotes make direct parameter promotion unsafe",
+      "evidence": {
+        "symbol": "bitcoin",
+        "trend": "uptrend",
+        "breakout_environment": "clean",
+        "liquidity_quality": "degraded"
+      },
+      "expected_effect": "preserves the backtested edge thesis while avoiding overconfidence under degraded data",
+      "confidence": 0.74,
+      "requires_shadow_test": true
+    },
+    {
+      "type": "risk_control",
+      "priority": "medium",
+      "target": "combined_crypto_strategy",
+      "action": "when feed health returns, consider validating Donchian/trend component first for ethereum while keeping execution size conservative until data stability is confirmed",
+      "reason": "market regime looks trend-supportive, but stale quotes make direct parameter promotion unsafe",
+      "evidence": {
+        "symbol": "ethereum",
+        "trend": "uptrend",
+        "breakout_environment": "clean",
+        "liquidity_quality": "degraded"
+      },
+      "expected_effect": "preserves the backtested edge thesis while avoiding overconfidence under degraded data",
+      "confidence": 0.74,
+      "requires_shadow_test": true
+    },
+    {
+      "type": "risk_control",
+      "priority": "medium",
+      "target": "combined_crypto_strategy",
+      "action": "when feed health returns, consider validating Donchian/trend component first for solana while keeping execution size conservative until data stability is confirmed",
+      "reason": "market regime looks trend-supportive, but stale quotes make direct parameter promotion unsafe",
+      "evidence": {
+        "symbol": "solana",
+        "trend": "uptrend",
+        "breakout_environment": "clean",
+        "liquidity_quality": "degraded"
+      },
+      "expected_effect": "preserves the backtested edge thesis while avoiding overconfidence under degraded data",
+      "confidence": 0.74,
+      "requires_shadow_test": true
+    }
+  ]
+}

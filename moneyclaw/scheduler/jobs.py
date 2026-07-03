@@ -9,6 +9,7 @@ import structlog
 if TYPE_CHECKING:
     from moneyclaw.agent.brain import AgentBrain
     from moneyclaw.agent.memory import Memory
+    from moneyclaw.agent.strategy_tuner import StrategyTuner
     from moneyclaw.config.settings import Settings
     from moneyclaw.data.feeds.crypto import CryptoFeed
     from moneyclaw.data.storage import MarketStorage
@@ -29,6 +30,7 @@ def register_all_jobs(
     crypto_feed: CryptoFeed,
     storage: MarketStorage,
     settings: Settings,
+    tuner: StrategyTuner | None = None,
 ) -> None:
     """Register all scheduled jobs."""
 
@@ -86,5 +88,12 @@ def register_all_jobs(
         log.info("job.daily_report_sent")
 
     scheduler.add_cron("daily_report", daily_report, hour=21, minute=0)
+
+    # Strategy optimizer — runs after markets close (02:00 UTC) once daily
+    if tuner is not None:
+        async def strategy_optimizer() -> None:
+            await tuner.run_analysis()
+
+        scheduler.add_cron("strategy_optimizer", strategy_optimizer, hour=2, minute=0)
 
     log.info("jobs.registered", count=len(scheduler.jobs))

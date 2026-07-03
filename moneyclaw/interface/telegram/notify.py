@@ -25,7 +25,15 @@ class Notifier:
     async def send(self, text: str) -> None:
         """Send a plain text message."""
         try:
-            await self._bot.send_message(chat_id=self._chat_id, text=text[:4000])
+            msg = await self._bot.send_message(chat_id=self._chat_id, text=text[:4000])
+            # Log the delivery receipt — this bot's worst failure mode is
+            # silence, so make every accepted send auditable in the journal.
+            log.info(
+                "notify.sent",
+                message_id=msg.message_id,
+                chat_id=msg.chat.id,
+                preview=text[:40],
+            )
         except Exception:
             log.exception("notify.send_error")
 

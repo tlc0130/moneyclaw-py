@@ -148,3 +148,7 @@ class Settings(BaseSettings):
     # Agent behavior
     scan_interval: int = 60  # Seconds between scans
     strategies_dir: str = "strategies"
+
+    # Comma-separated allowlist of strategy names to load. Empty = load all.
+    # Example: ENABLED_STRATEGIES=combined_crypto_strategy,crypto_dca
+    enabled_strategies: str = ""
