@@ -421,15 +421,31 @@ async def _run(web: bool, telegram: bool) -> None:
     try:
         await asyncio.wait({gather_task, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
     finally:
+        # Every shutdown step is time-boxed. Cancelling a task blocked on
+        # asyncio.to_thread does NOT interrupt the thread (a mid-flight strategy
+        # scan holds the ccxt fetch loop for minutes), and Python 3.10's
+        # asyncio.run additionally joins executor threads on exit — without
+        # these bounds a `systemctl stop` mid-scan rides the 90s timeout into
+        # SIGKILL, skipping cleanup entirely.
         stop_waiter.cancel()
         with contextlib.suppress(Exception):
-            await brain.stop()
+            await asyncio.wait_for(brain.stop(), timeout=10)
         gather_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
-            await gather_task
+            await asyncio.wait_for(gather_task, timeout=15)
         storage.close()
-        await memory.close()
-        await exchange_mgr.close_all()  # close async ccxt aiohttp sessions
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(memory.close(), timeout=5)
+        with contextlib.suppress(Exception):
+            # close async ccxt aiohttp sessions
+            await asyncio.wait_for(exchange_mgr.close_all(), timeout=5)
+        if not gather_task.done():
+            # A worker thread is still wedged; interpreter exit would block on
+            # joining it. State is saved and resources closed — exit hard.
+            import os
+
+            click.echo("Shutdown: abandoning wedged worker thread, exiting.", err=True)
+            os._exit(0)
 
 
 def _resolve_exchange_keys(ex_settings, exchange_id: str) -> tuple[str, str, str]:

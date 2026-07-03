@@ -4,6 +4,7 @@ import argparse
 import json
 import sqlite3
 import subprocess
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -136,7 +137,9 @@ def _recent_titles(results: list[dict]) -> list[str]:
 
 
 def _run_moneyclaw_strategies(project_root: Path) -> dict:
-    python_exe = project_root / ".venv" / "Scripts" / "python.exe"
+    # Use the interpreter running this script — works for any venv layout
+    # (Linux venv/bin, Windows .venv/Scripts) and under systemd.
+    python_exe = Path(sys.executable)
     try:
         proc = subprocess.run(
             [str(python_exe), "-m", "moneyclaw", "strategies"],
