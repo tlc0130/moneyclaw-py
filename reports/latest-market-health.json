@@ -1,0 +1,87 @@
+{
+  "generated_at": "2026-05-06T02:31:04.866087+00:00",
+  "status": "degraded",
+  "market_db": "C:\\Users\\thump\\moneyclaw-py\\data\\market.runtime.duckdb",
+  "symbol_count": 3,
+  "fresh_symbols": [],
+  "degraded_symbols": [
+    "bitcoin",
+    "ethereum",
+    "solana"
+  ],
+  "unknown_symbols": [],
+  "avg_staleness_minutes": 2227.36,
+  "max_staleness_minutes": 2227.45,
+  "recommendations": [
+    "refresh or restart market data collection before trusting strategy tuning",
+    "treat regime analysis as stale until quote collection resumes"
+  ],
+  "symbols": [
+    {
+      "symbol": "bitcoin",
+      "as_of": "2026-05-06T02:31:04.866087+00:00",
+      "samples": 96,
+      "latest_price": 80241.0,
+      "latest_timestamp": "2026-05-04T13:23:37.615731",
+      "trend": "uptrend",
+      "volatility": "low",
+      "breakout_environment": "clean",
+      "liquidity_quality": "degraded",
+      "risk_posture": "risk_on",
+      "momentum_quality": "strong",
+      "confidence": 0.85,
+      "price_change_pct": 5.69,
+      "range_position": 0.946,
+      "staleness_minutes": 2227.45,
+      "notes": [
+        "quote stream stale (2227.5m old)",
+        "+5.69% over sampled window",
+        "range position=0.95"
+      ]
+    },
+    {
+      "symbol": "ethereum",
+      "as_of": "2026-05-06T02:31:04.866087+00:00",
+      "samples": 96,
+      "latest_price": 2368.05,
+      "latest_timestamp": "2026-05-04T13:23:43.332028",
+      "trend": "uptrend",
+      "volatility": "low",
+      "breakout_environment": "clean",
+      "liquidity_quality": "degraded",
+      "risk_posture": "risk_on",
+      "momentum_quality": "strong",
+      "confidence": 0.85,
+      "price_change_pct": 4.849,
+      "range_position": 0.951,
+      "staleness_minutes": 2227.36,
+      "notes": [
+        "quote stream stale (2227.4m old)",
+        "+4.85% over sampled window",
+        "range position=0.95"
+      ]
+    },
+    {
+      "symbol": "solana",
+      "as_of": "2026-05-06T02:31:04.866087+00:00",
+      "samples": 96,
+      "latest_price": 84.86,
+      "latest_timestamp": "2026-05-04T13:23:48.960824",
+      "trend": "uptrend",
+      "volatility": "low",
+      "breakout_environment": "clean",
+      "liquidity_quality": "degraded",
+      "risk_posture": "risk_on",
+      "momentum_quality": "normal",
+      "confidence": 0.85,
+      "price_change_pct": 1.995,
+      "range_position": 0.871,
+      "staleness_minutes": 2227.27,
+      "notes": [
+        "quote stream stale (2227.3m old)",
+        "+2.00% over sampled window",
+        "range position=0.87"
+      ]
+    }
+  ]
+}

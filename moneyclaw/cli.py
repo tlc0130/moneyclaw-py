@@ -10,6 +10,8 @@ from typing import Any
 import click
 import structlog
 
+log = structlog.get_logger()
+
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
     "INFO": logging.INFO,

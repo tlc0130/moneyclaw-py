@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-05-06T03:22:36.165375+00:00",
+  "status": "error",
+  "target_strategy": "combined_crypto_strategy",
+  "module_name": "paper_crypto_strategies",
+  "strategy_module_path": "C:\\Users\\thump\\.openclaw\\moneyclaw_strategies\\paper_crypto_strategies.py",
+  "strategies_dir": "C:\\Users\\thump\\.openclaw\\moneyclaw_strategies",
+  "scan_ok": false,
+  "error_type": "TimeoutError",
+  "error": ""
+}
