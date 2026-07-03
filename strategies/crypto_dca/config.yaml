@@ -4,7 +4,7 @@
 coin: bitcoin
 symbol: BTC/USDT
 amount_usd: 10.0
-exchange_id: binance
+exchange_id: binanceus
 # Failed buys (e.g. InsufficientFunds) wait this long before retrying, and
 # stop for the day after max_attempts_per_day — never retry every brain tick.
 failed_buy_retry_minutes: 60

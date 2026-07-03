@@ -11,4 +11,4 @@ targets:
 deviation_threshold: 0.05
 
 # Exchange to use for balance queries and trades
-exchange_id: binance
+exchange_id: binanceus

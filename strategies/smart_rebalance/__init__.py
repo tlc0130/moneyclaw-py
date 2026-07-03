@@ -51,7 +51,7 @@ class SmartRebalance(Strategy):
         self._holdings = current_holdings or {}
         self._executor = executor
         self._exchange_manager = exchange_manager
-        self._exchange_id = exchange_id or cfg.get("exchange_id", "binance")
+        self._exchange_id = exchange_id or cfg.get("exchange_id", "binanceus")
         self._threshold = (
             deviation_threshold
             if deviation_threshold is not None

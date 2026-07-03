@@ -20,13 +20,31 @@ _LOG_LEVELS = {
 }
 
 
+from moneyclaw.agent.log_analyzer import LogBuffer, LogAnalyzer
+
+# Module-level so the tuner and any other component can import it directly.
+log_buffer = LogBuffer()
+log_analyzer = LogAnalyzer(log_buffer)
+
+
 @click.group()
 @click.option("--log-level", default="INFO", help="Log level (DEBUG, INFO, WARNING, ERROR)")
 def main(log_level: str) -> None:
     """MoneyClaw — 7x24 AI Agent that saves and makes money."""
     level = _LOG_LEVELS.get(log_level.upper(), logging.INFO)
     structlog.configure(
+        processors=[
+            log_buffer,                                         # capture events in ring buffer
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.dev.ConsoleRenderer(),
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
     )
 
 
@@ -256,17 +274,58 @@ async def _run(web: bool, telegram: bool) -> None:
         executor=executor,
     )
 
-    # Discover and register strategies — inject deps based on what they need
+    # Discover and register strategies — inject deps based on what they need.
+    # Also scan strategies_live/ alongside the primary dir so live strategies
+    # (e.g. combined_crypto_strategy) are loaded without requiring a config change.
+    # Use __file__-anchored absolute paths so the check is CWD-independent (systemd
+    # services often run from WorkingDirectory=/ rather than the repo root).
+    from pathlib import Path as _Path
+
+    _repo_root = _Path(__file__).parent.parent
     strategy_classes = discover_strategies(settings.strategies_dir)
+    _live_dir = _repo_root / "strategies_live"
+    if _live_dir.exists() and _live_dir.resolve() != _Path(settings.strategies_dir).resolve():
+        strategy_classes = strategy_classes + discover_strategies(_live_dir)
+    _enabled_filter = (
+        {s.strip() for s in settings.enabled_strategies.split(",") if s.strip()}
+        if settings.enabled_strategies
+        else None
+    )
     for cls in strategy_classes:
+        _cls_name = getattr(cls, "name", None) or cls.__name__
+        if _enabled_filter and _cls_name not in _enabled_filter:
+            log.info("strategy.skipped_by_allowlist", name=_cls_name)
+            continue
         instance = _instantiate_strategy(
             cls,
             crypto_feed=crypto_feed,
             stock_feed=stock_feed,
             executor=executor,
             exchange_manager=exchange_mgr,
+            notifier=notifier,
         )
         await strategies.register(instance)
+
+    # Strategy tuner — daily LLM-driven parameter optimizer
+    from pathlib import Path as _Path2
+
+    from moneyclaw.agent.strategy_tuner import StrategyTuner
+
+    _tuner_config = _Path2(__file__).parent.parent / "strategies_live" / "config.yaml"
+    tuner = StrategyTuner(
+        config_path=_tuner_config,
+        log_analyzer=log_analyzer,
+        memory=memory,
+        llm=llm,
+        notifier=notifier,
+        strategies=strategies,
+        min_change_interval_hours=settings.tuner.min_change_interval_hours
+        if hasattr(settings, "tuner")
+        else 24.0,
+        min_trades_for_tuning=settings.tuner.min_trades_for_tuning
+        if hasattr(settings, "tuner")
+        else 0,
+    )
 
     # --- Schedule jobs ---
     from moneyclaw.scheduler.jobs import register_all_jobs
@@ -280,6 +339,7 @@ async def _run(web: bool, telegram: bool) -> None:
         crypto_feed=crypto_feed,
         storage=storage,
         settings=settings,
+        tuner=tuner,
     )
 
     # Build tasks list
@@ -386,7 +446,7 @@ def _resolve_exchange_keys(ex_settings, exchange_id: str) -> tuple[str, str, str
     return ex_settings.binance_api_key, ex_settings.binance_secret, password
 
 
-def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_manager):
+def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_manager, notifier=None):
     """Create a strategy instance, injecting dependencies based on its constructor."""
     name = cls.__name__ if hasattr(cls, "__name__") else str(cls)
 
@@ -405,6 +465,8 @@ def _instantiate_strategy(cls, *, crypto_feed, stock_feed, executor, exchange_ma
             kwargs["executor"] = executor
         elif param_name == "exchange_manager":
             kwargs["exchange_manager"] = exchange_manager
+        elif param_name == "notifier":
+            kwargs["notifier"] = notifier
 
     try:
         return cls(**kwargs)
