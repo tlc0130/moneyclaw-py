@@ -220,7 +220,9 @@ class CombinedCryptoStrategy(Strategy):
     risk_level = "medium"
     min_llm_layer = 0
 
-    def __init__(self, executor: TradeExecutor | None = None) -> None:
+    def __init__(
+        self, executor: TradeExecutor | None = None, notifier: object | None = None
+    ) -> None:
         cfg = _load_config()
         common = cfg.get("common", {})
         donchian = cfg.get("donchian", {})
@@ -228,6 +230,13 @@ class CombinedCryptoStrategy(Strategy):
         bear = cfg.get("bear", {})
 
         self._executor = executor
+        self._notifier = notifier
+        # Dry-spell alerts: tell the user via Telegram when no entry signal has
+        # fired for a while, so silence is distinguishable from a dead bot.
+        self._last_entry_ts: float = 0.0
+        self._last_dry_spell_notify: float = 0.0
+        self._dry_spell_notify_hours = float(common.get("dry_spell_notify_hours", 24))
+        self._pending_dry_spell: dict | None = None
         self._exchange_id = str(common.get("exchange_id", "binanceus"))
         self._exchange = _exchange(self._exchange_id)
         self._timeframe = str(common.get("timeframe", "4h"))
@@ -249,6 +258,13 @@ class CombinedCryptoStrategy(Strategy):
         self._slippage_rate = float(common.get("slippage_rate", 0.002))
         self._btc_regime_ema = int(common.get("btc_regime_ema", 200))
         self._regime_symbol = str(common.get("regime_symbol", "BTC/USDT"))
+        # False = treat the regime as always-bull (Donchian/RSI legs run, bear
+        # leg doesn't). Tolerance widens "bull": close >= EMA * (1 - tolerance).
+        self._btc_regime_filter = bool(common.get("btc_regime_filter", True))
+        self._btc_regime_tolerance = float(common.get("btc_regime_tolerance_pct", 0.0))
+        # Hard USD cap on the risk budget per entry (0 = no cap). Protects
+        # against oversized orders if the balance fetch returns a stale value.
+        self._max_trade_usd = float(common.get("max_trade_usd", 0.0))
         self._place_native_stops = bool(common.get("place_native_stops", True))
         self._stop_limit_buffer = float(common.get("stop_limit_buffer", 0.005))
         # If the live price has moved more than this past the signal entry by the
@@ -375,6 +391,7 @@ class CombinedCryptoStrategy(Strategy):
         await self._reconcile_stops()
         if not self._due_for_full_scan():
             return []
+        self._pending_dry_spell = None  # set by _scan_sync when a report is due
         result = await asyncio.to_thread(self._scan_sync)
         if result is None:
             # Scan blew up — retry sooner than the full interval instead of
@@ -384,7 +401,34 @@ class CombinedCryptoStrategy(Strategy):
             )
             return []
         self._last_full_scan = time.monotonic()
+        await self._send_dry_spell_report()
         return result
+
+    async def _send_dry_spell_report(self) -> None:
+        report, self._pending_dry_spell = self._pending_dry_spell, None
+        if not report or not self._notifier:
+            return
+        regime = "BULLISH" if report["bullish"] else "BEARISH"
+        since = (
+            f"{report['hours_since_entry']:.0f}h"
+            if report["hours_since_entry"]
+            else "startup"
+        )
+        if report["btc_close"] is not None and report["btc_ema"] is not None:
+            regime_line = (
+                f"BTC regime: {regime} "
+                f"(${report['btc_close']:,.0f} vs EMA ${report['btc_ema']:,.0f})"
+            )
+        else:
+            regime_line = f"BTC regime: {regime} (regime data unavailable)"
+        try:
+            await self._notifier.send(
+                f"No new entries in {since}\n"
+                f"{regime_line}\n"
+                f"Open positions: {report['open_positions']}"
+            )
+        except Exception:
+            log.warning("combined_strategy.dry_spell_notify_failed")
 
     def _due_for_full_scan(self) -> bool:
         if self._last_full_scan is None:
@@ -714,6 +758,61 @@ class CombinedCryptoStrategy(Strategy):
     def estimate_roi(self) -> float:
         return 1.25
 
+    def reload_config(self) -> None:
+        """Hot-reload tunable parameters from config.yaml.
+
+        Called by the StrategyTuner after writing new config values. Preserves
+        all runtime state (_positions, _balance, _processed_actions,
+        _last_full_scan). Fast (one YAML read + assignments), so briefly
+        blocking the event loop is acceptable.
+        """
+        cfg = _load_config()
+        common = cfg.get("common", {})
+        donchian = cfg.get("donchian", {})
+        rsi2 = cfg.get("rsi2", {})
+        bear = cfg.get("bear", {})
+
+        self._risk_per_trade = float(common.get("risk_per_trade", self._risk_per_trade))
+        self._max_open_positions = int(common.get("max_open_positions", self._max_open_positions))
+        self._max_portfolio_risk = float(common.get("max_portfolio_risk", self._max_portfolio_risk))
+        self._max_notional_fraction = float(
+            common.get("max_notional_fraction", self._max_notional_fraction)
+        )
+        self._scan_min_interval = float(
+            common.get("scan_min_interval_seconds", self._scan_min_interval)
+        )
+        self._btc_regime_filter = bool(common.get("btc_regime_filter", self._btc_regime_filter))
+        self._btc_regime_tolerance = float(
+            common.get("btc_regime_tolerance_pct", self._btc_regime_tolerance)
+        )
+        self._max_trade_usd = float(common.get("max_trade_usd", self._max_trade_usd))
+
+        self._donchian_entry_channel = int(donchian.get("entry_channel", self._donchian_entry_channel))
+        self._donchian_exit_channel = int(donchian.get("exit_channel", self._donchian_exit_channel))
+        self._donchian_atr_stop_mult = float(donchian.get("atr_stop_mult", self._donchian_atr_stop_mult))
+
+        self._rsi_entry = float(rsi2.get("entry", self._rsi_entry))
+        self._rsi_exit = float(rsi2.get("exit", self._rsi_exit))
+        self._time_stop_bars = int(rsi2.get("time_stop_bars", self._time_stop_bars))
+        self._red_cut_bars = int(rsi2.get("red_cut_bars", self._red_cut_bars))
+        self._rsi_atr_stop_mult = float(rsi2.get("atr_stop_mult", self._rsi_atr_stop_mult))
+
+        self._bear_enabled = bool(bear.get("enabled", self._bear_enabled))
+        self._bear_rsi_entry = float(bear.get("rsi_entry", self._bear_rsi_entry))
+        self._bear_rsi_exit = float(bear.get("rsi_exit", self._bear_rsi_exit))
+        self._bear_risk_scale = float(bear.get("risk_scale", self._bear_risk_scale))
+        self._bear_atr_stop_mult = float(bear.get("atr_stop_mult", self._bear_atr_stop_mult))
+        self._bear_time_stop_bars = int(bear.get("time_stop_bars", self._bear_time_stop_bars))
+        self._bear_red_cut_bars = int(bear.get("red_cut_bars", self._bear_red_cut_bars))
+
+        log.info(
+            "combined_strategy.config_reloaded",
+            risk_per_trade=self._risk_per_trade,
+            max_open_positions=self._max_open_positions,
+            rsi_entry=self._rsi_entry,
+            bear_rsi_entry=self._bear_rsi_entry,
+        )
+
     # ---------------------------------------------------------------- sizing
 
     def _size_entry(
@@ -723,6 +822,8 @@ class CombinedCryptoStrategy(Strategy):
         or None (logged) when the entry can't be sized safely."""
         equity = max(self._balance, 1.0)
         risk_budget = equity * self._risk_per_trade * risk_scale
+        if self._max_trade_usd > 0:
+            risk_budget = min(risk_budget, self._max_trade_usd)
         stop_distance = entry - hard_stop
         if stop_distance <= 0:
             return None
@@ -917,13 +1018,27 @@ class CombinedCryptoStrategy(Strategy):
 
             # --- Regime: degrade gracefully, never abort the scan -----------
             bullish: bool
+            regime_close: float | None = None
+            regime_ema: float | None = None
             btc_df = symbol_data.get(self._regime_symbol)
             if btc_df is not None and len(btc_df) >= self._btc_regime_ema + 2:
-                btc_ema = (
+                regime_ema = float(
                     btc_df["close"].ewm(span=self._btc_regime_ema, adjust=False).mean().iloc[-2]
                 )
-                bullish = bool(btc_df.iloc[-2]["close"] > btc_ema)
+                regime_close = float(btc_df.iloc[-2]["close"])
+                if not self._btc_regime_filter:
+                    bullish = True
+                else:
+                    bullish = regime_close >= regime_ema * (1.0 - self._btc_regime_tolerance)
                 self._last_regime = bullish
+                log.info(
+                    "combined_strategy.scan_regime",
+                    bullish=bullish,
+                    btc_close=round(regime_close, 0),
+                    btc_ema=round(regime_ema, 0),
+                    regime_filter=self._btc_regime_filter,
+                    tolerance_pct=self._btc_regime_tolerance,
+                )
             elif self._last_regime is not None:
                 bullish = self._last_regime
                 log.warning("combined_strategy.regime_data_missing_using_last", bullish=bullish)
@@ -983,6 +1098,28 @@ class CombinedCryptoStrategy(Strategy):
                 ],
                 signals=sig_state,
             )
+
+            # Track last entry time; flag a dry-spell report for scan() to send
+            # (async Telegram I/O can't happen in this sync thread).
+            if any(o.data.get("action") == "entry" for o in opportunities):
+                self._last_entry_ts = time.monotonic()
+                self._last_dry_spell_notify = 0.0  # next dry spell notifies promptly
+            else:
+                now_mono = time.monotonic()
+                hours_since_notify = (now_mono - self._last_dry_spell_notify) / 3600
+                if hours_since_notify >= self._dry_spell_notify_hours:
+                    hours_since_entry = (
+                        (now_mono - self._last_entry_ts) / 3600 if self._last_entry_ts else None
+                    )
+                    self._pending_dry_spell = {
+                        "bullish": bullish,
+                        "btc_close": regime_close,
+                        "btc_ema": regime_ema,
+                        "hours_since_entry": hours_since_entry,
+                        "open_positions": len(self._positions),
+                    }
+                    self._last_dry_spell_notify = now_mono
+
             return opportunities
         except Exception:
             log.exception("combined_strategy.scan_failed")

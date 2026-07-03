@@ -1,3 +1,26 @@
+# ── Tuner bounds ──────────────────────────────────────────────────────────────
+# The StrategyTuner can only adjust parameters within these ranges. Values here
+# may be tighter than the hard-coded absolute limits in strategy_tuner.py but
+# never looser. Keys must match the dotted config paths below (4h-bar variant:
+# holding clocks are in BARS, and the bear leg is tunable too).
+tuner:
+  min_change_interval_hours: 24   # don't tune more than once per day
+  min_trades_for_tuning: 0        # tune even with zero trades (signal-gap analysis)
+  bounds:
+    rsi2.entry:                [5,    20]
+    rsi2.exit:                 [55,   85]
+    rsi2.atr_stop_mult:        [1.5,  4.0]
+    rsi2.time_stop_bars:       [42,   84]    # 7-14 days of 4h bars
+    donchian.entry_channel:    [20,   60]
+    donchian.exit_channel:     [5,    25]
+    donchian.atr_stop_mult:    [1.5,  3.0]
+    bear.rsi_entry:            [5,    18]
+    bear.rsi_exit:             [55,   80]
+    bear.atr_stop_mult:        [1.0,  2.5]
+    bear.time_stop_bars:       [18,   48]    # 3-8 days
+    common.risk_per_trade:     [0.005, 0.025]
+    common.max_open_positions: [2,    6]
+
 common:
   # 4h bars: a new decision point every 4 hours instead of once a day.
   timeframe: 4h
@@ -19,6 +42,17 @@ common:
   exchange_id: binanceus
   regime_symbol: BTC/USDT
   btc_regime_ema: 200
+  # BTC regime filter — false treats the regime as always-bull (bear leg off).
+  # tolerance_pct widens "bull": entries allowed while BTC is up to this
+  # fraction below its regime EMA. 0.0 keeps the strict close>EMA boundary —
+  # the dedicated bear leg already covers deep-bear conditions.
+  btc_regime_filter: true
+  btc_regime_tolerance_pct: 0.0
+  # Hard USD cap on risk budget per entry (0 = no cap). Protects against
+  # oversized orders if the balance fetch returns a stale/high value.
+  max_trade_usd: 20.0
+  # Telegram dry-spell alert when no entry signal fires for this many hours.
+  dry_spell_notify_hours: 24
   # Place a native exchange stop-loss on every entry (enforced 24/7, not just
   # on the scan). Set false if Binance.US rejects STOP_LOSS_LIMIT for a symbol.
   place_native_stops: true

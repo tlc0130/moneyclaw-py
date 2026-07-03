@@ -47,15 +47,22 @@ _MAX_HEADLINES = 12
 # ── Bounds ─────────────────────────────────────────────────────────────────────
 
 # Hard-coded safety limits — config.yaml bounds can only TIGHTEN these, not loosen.
+# Keys match the 4h-bar strategy config: holding clocks are in BARS (6 bars/day)
+# and the bear leg (reduced-risk oversold bounces) is tunable within tight caps.
 _ABSOLUTE_BOUNDS: dict[str, tuple[float, float]] = {
     "rsi2.entry":            (3.0,  30.0),
     "rsi2.exit":             (50.0, 90.0),
     "rsi2.atr_stop_mult":    (1.0,  5.0),
-    "rsi2.time_stop_days":   (5,    20),
-    "rsi2.day5_green_check": (3,    10),
+    "rsi2.time_stop_bars":   (30,   120),   # 5-20 days of 4h bars
+    "rsi2.red_cut_bars":     (12,   60),    # 2-10 days
     "donchian.entry_channel": (10,  120),
     "donchian.exit_channel":  (5,   40),
     "donchian.atr_stop_mult": (1.0, 4.0),
+    "bear.rsi_entry":         (3.0, 20.0),
+    "bear.rsi_exit":          (50.0, 85.0),
+    "bear.atr_stop_mult":     (1.0, 3.0),
+    "bear.time_stop_bars":    (12,  60),    # 2-10 days
+    "bear.red_cut_bars":      (6,   36),    # 1-6 days
     "common.risk_per_trade":  (0.003, 0.04),
     "common.max_open_positions": (1, 8),
 }
@@ -219,7 +226,7 @@ class StrategyTuner:
             for k, v in sorted(bounds.items())
         )
 
-        return f"""You are an automated trading strategy optimizer for a Donchian breakout + RSI-2 mean-reversion crypto strategy.
+        return f"""You are an automated trading strategy optimizer for a regime-adaptive crypto strategy on 4h bars: Donchian breakouts + RSI-2 dip-buys in a BTC bull regime, and a reduced-risk oversold-bounce leg (bear.*) when BTC is below its regime EMA. Parameters ending in _bars are counts of 4h bars (6 bars = 1 day).
 
 ## Log Summary (last 24 hours)
 - Total scans: {log_summary.get('scans_total', 0)}
