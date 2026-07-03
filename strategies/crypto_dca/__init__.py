@@ -6,7 +6,7 @@ No LLM needed — pure rules engine.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import structlog
 
@@ -43,6 +43,15 @@ class CryptoDCA(Strategy):
         self._exchange_id = exchange_id or cfg.get("exchange_id")
         self._executor = executor
         self._last_buy: datetime | None = None
+        # A failed buy must NOT retry on every brain tick (60s): with a live
+        # account that lacks free quote balance, that meant ~1,440 rejected
+        # orders/day hammering the exchange. Failed attempts back off for a
+        # cooldown and give up for the day after a few tries.
+        self._retry_cooldown_min = float(cfg.get("failed_buy_retry_minutes", 60.0))
+        self._max_attempts_per_day = int(cfg.get("max_attempts_per_day", 3))
+        self._retry_after: datetime | None = None
+        self._failed_attempts = 0
+        self._attempt_date: date | None = None
 
     async def scan(self) -> list[Opportunity]:
         """Check if it's time to DCA. Returns opportunity if due."""
@@ -50,6 +59,16 @@ class CryptoDCA(Strategy):
 
         # Simple: if we haven't bought today, generate opportunity
         if self._last_buy and self._last_buy.date() == now.date():
+            return []
+
+        # Failure backoff: fresh day resets the counter; otherwise honor the
+        # cooldown and the per-day attempt cap.
+        if self._attempt_date and self._attempt_date != now.date():
+            self._failed_attempts = 0
+            self._retry_after = None
+        if self._failed_attempts >= self._max_attempts_per_day:
+            return []
+        if self._retry_after and now < self._retry_after:
             return []
 
         return [
@@ -74,6 +93,7 @@ class CryptoDCA(Strategy):
     async def execute(self, opp: Opportunity) -> Result:
         """Execute the DCA buy."""
         if not self._executor:
+            self._record_failed_attempt()
             return Result(success=False, profit_loss=0, details={"error": "no executor configured"})
 
         try:
@@ -87,6 +107,8 @@ class CryptoDCA(Strategy):
             success = order.status not in ("failed", "blocked", "rejected")
             if success:
                 self._last_buy = datetime.now(timezone.utc)
+            else:
+                self._record_failed_attempt()
             return Result(
                 success=success,
                 profit_loss=0,  # DCA P&L is long-term
@@ -99,7 +121,22 @@ class CryptoDCA(Strategy):
             )
         except Exception:
             log.exception("crypto_dca.execute_error")
+            self._record_failed_attempt()
             return Result(success=False, details={"error": "execution failed"})
+
+    def _record_failed_attempt(self) -> None:
+        now = datetime.now(timezone.utc)
+        if self._attempt_date != now.date():
+            self._attempt_date = now.date()
+            self._failed_attempts = 0
+        self._failed_attempts += 1
+        self._retry_after = now + timedelta(minutes=self._retry_cooldown_min)
+        log.warning(
+            "crypto_dca.buy_failed_backoff",
+            attempt=self._failed_attempts,
+            max_attempts=self._max_attempts_per_day,
+            retry_after=self._retry_after.isoformat(),
+        )
 
     def estimate_roi(self) -> float:
         """Historical BTC DCA yields ~1.5-3x over multi-year periods."""

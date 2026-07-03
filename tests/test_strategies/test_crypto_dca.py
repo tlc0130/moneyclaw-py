@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -66,6 +66,46 @@ class TestCryptoDCAExecute:
         opps = await strategy.scan()
         await strategy.execute(opps[0])
         assert strategy._last_buy is not None
+
+
+class TestCryptoDCAFailureBackoff:
+    async def test_failed_buy_arms_cooldown(self) -> None:
+        strategy = CryptoDCA(executor=None)  # no executor => execution fails
+        opps = await strategy.scan()
+        result = await strategy.execute(opps[0])
+        assert result.success is False
+        assert strategy._retry_after is not None
+        # In cooldown: no new opportunity on the next tick
+        assert await strategy.scan() == []
+
+    async def test_retries_after_cooldown_expires(self) -> None:
+        strategy = CryptoDCA(executor=None)
+        await strategy.execute((await strategy.scan())[0])
+        strategy._retry_after = datetime.now(timezone.utc) - timedelta(seconds=1)
+        assert len(await strategy.scan()) == 1
+
+    async def test_gives_up_for_the_day_after_max_attempts(self) -> None:
+        strategy = CryptoDCA(executor=None)
+        for _ in range(strategy._max_attempts_per_day):
+            opps = await strategy.scan()
+            assert len(opps) == 1
+            await strategy.execute(opps[0])
+            strategy._retry_after = datetime.now(timezone.utc) - timedelta(seconds=1)
+        assert await strategy.scan() == []
+
+    async def test_new_day_resets_backoff(self) -> None:
+        strategy = CryptoDCA(executor=None)
+        strategy._failed_attempts = strategy._max_attempts_per_day
+        strategy._attempt_date = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+        strategy._retry_after = datetime.now(timezone.utc) + timedelta(hours=1)
+        assert len(await strategy.scan()) == 1
+
+    async def test_successful_buy_does_not_arm_backoff(self, strategy: CryptoDCA) -> None:
+        opps = await strategy.scan()
+        result = await strategy.execute(opps[0])
+        assert result.success is True
+        assert strategy._retry_after is None
+        assert strategy._failed_attempts == 0
 
 
 class TestCryptoDCAMeta:
